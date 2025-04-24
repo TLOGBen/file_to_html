@@ -204,17 +204,16 @@ const HTML_TEMPLATE: &str = r#"
 </html>
 "#;
 
-/// 主函數，程式進入點，負責初始化日誌並處理命令列參數
+/// 主函數，程式入口點，負責初始化並協調執行
 fn main() -> io::Result<()> {
-    // 收集命令列參數並處理
     let args: Vec<String> = std::env::args().collect();
     let output_dir = process_args(args)?;
-    println!("轉換完成！輸出檔案位於：{}", output_dir);
     info!("程式執行完成，輸出目錄：{}", output_dir);
+    println!("轉換完成！輸出檔案位於：{}", output_dir);
     Ok(())
 }
 
-/// 處理命令列參數，根據參數數量決定進入互動模式或命令列模式
+/// 根據參數數量決定進入互動模式或命令列模式
 fn process_args(args: Vec<String>) -> io::Result<String> {
     if args.len() == 1 {
         process_interactive_mode()
@@ -223,7 +222,7 @@ fn process_args(args: Vec<String>) -> io::Result<String> {
     }
 }
 
-/// 互動模式處理，提示使用者輸入參數並執行轉換
+/// 互動模式處理，收集輸入並執行轉換
 fn process_interactive_mode() -> io::Result<String> {
     println!("=== 歡迎使用互動模式 ===");
     let input = get_input_path()?;
@@ -235,18 +234,10 @@ fn process_interactive_mode() -> io::Result<String> {
     let max_size = get_max_size_option()?;
     let log_level = get_log_level_option()?;
 
-    // 設置日誌級別
-    let log_level_filter = match log_level.as_str() {
-        "info" => log::LevelFilter::Info,
-        "warn" => log::LevelFilter::Warn,
-        "error" => log::LevelFilter::Error,
-        _ => log::LevelFilter::Info,
-    };
-    env_logger::Builder::new().filter_level(log_level_filter).init();
-
+    setup_logging(&log_level)?;
     execute_conversion(
-        input,
-        output,
+        &input,
+        &output,
         is_compressed,
         compress,
         &include,
@@ -272,106 +263,87 @@ fn get_input_path() -> io::Result<String> {
         .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))
 }
 
-/// 收集轉換模式、密碼選項、ZIP 層數和加密方法
-fn get_conversion_mode_and_password() -> io::Result<(bool, PasswordMode, bool, String, String)> {
+/// 收集轉換模式
+fn get_conversion_mode() -> io::Result<bool> {
     let is_compressed = Select::new()
         .with_prompt("選擇轉換模式（使用方向鍵選擇，按 Enter 確認）")
         .items(&["個別 - 為每個檔案生成單獨的 HTML", "壓縮 - 壓縮成單個 ZIP 嵌入 HTML"])
         .default(0)
         .interact()
         .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("轉換模式選擇失敗: {}", e)))? == 1;
+    Ok(is_compressed)
+}
 
-    let (password_mode, display_password, layer) = if is_compressed {
-        let layer = Select::new()
-            .with_prompt("選擇 ZIP 層數（使用方向鍵選擇，按 Enter 確認）")
-            .items(&["單層 - 僅生成一層 ZIP", "雙層 - 生成外層和內層 ZIP（預設）"])
-            .default(1)
-            .interact()
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("ZIP 層數選擇失敗: {}", e)))?;
-        let layer_str = match layer {
-            0 => "single",
-            1 => "double",
-            _ => unreachable!(),
-        };
-
-        let mode = Select::new()
-            .with_prompt("選擇密碼模式（使用方向鍵選擇，按 Enter 確認）")
-            .items(&["隨機生成（16 位，預設）", "手動輸入", "時間戳（yyyyMMddhhmmss）", "無密碼"])
-            .default(0)
-            .interact()
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("密碼模式選擇失敗: {}", e)))?;
-        let display = if mode == 0 {
-            Confirm::new()
-                .with_prompt("是否在 HTML 中顯示隨機生成的密碼？（預設為是）")
-                .default(true)
-                .interact()
-                .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("密碼顯示選項輸入失敗: {}", e)))?
-        } else if mode == 3 {
-            false
-        } else {
-            Confirm::new()
-                .with_prompt("是否在 HTML 中顯示密碼？（預設為否，將儲存至 .key 檔案）")
-                .default(false)
-                .interact()
-                .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("密碼顯示選項輸入失敗: {}", e)))?
-        };
-        (match mode {
-            0 => PasswordMode::Random,
-            1 => PasswordMode::Manual,
-            2 => PasswordMode::Timestamp,
-            3 => PasswordMode::None,
-            _ => unreachable!(),
-        }, display, layer_str.to_string())
+/// 收集 ZIP 層數
+fn get_zip_layer(is_compressed: bool) -> io::Result<String> {
+    let (items, default) = if is_compressed {
+        (vec!["單層 - 僅生成一層 ZIP", "雙層 - 生成外層和內層 ZIP（預設）"], 1)
     } else {
-        let layer = Select::new()
-            .with_prompt("選擇 ZIP 層數（使用方向鍵選擇，按 Enter 確認）")
-            .items(&["不壓縮", "單層 - 僅生成一層 ZIP", "雙層 - 生成外層和內層 ZIP（預設）"])
-            .default(0)
-            .interact()
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("ZIP 層數選擇失敗: {}", e)))?;
-        let layer_str = match layer {
-            0 => "none",
-            1 => "single",
-            2 => "double",
-            _ => unreachable!(),
-        };
-        if layer_str == "none" {
-            (PasswordMode::None, false, layer_str.to_string())
-        } else {
-            let mode = Select::new()
-                .with_prompt("選擇密碼模式（使用方向鍵選擇，按 Enter 確認）")
-                .items(&["隨機生成（16 位，預設）", "手動輸入", "時間戳（yyyyMMddhhmmss）", "無密碼"])
-                .default(0)
-                .interact()
-                .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("密碼模式選擇失敗: {}", e)))?;
-            let display = if mode == 0 {
-                Confirm::new()
-                    .with_prompt("是否在 HTML 中顯示隨機生成的密碼？（預設為是）")
-                    .default(true)
-                    .interact()
-                    .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("密碼顯示選項輸入失敗: {}", e)))?
-            } else if mode == 3 {
-                false
-            } else {
-                Confirm::new()
-                    .with_prompt("是否在 HTML 中顯示密碼？（預設為否，將儲存至 .key 檔案）")
-                    .default(false)
-                    .interact()
-                    .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("密碼顯示選項輸入失敗: {}", e)))?
-            };
-            (match mode {
-                0 => PasswordMode::Random,
-                1 => PasswordMode::Manual,
-                2 => PasswordMode::Timestamp,
-                3 => PasswordMode::None,
-                _ => unreachable!(),
-            }, display, layer_str.to_string())
-        }
+        (vec!["不壓縮", "單層 - 僅生成一層 ZIP", "雙層 - 生成外層和內層 ZIP（預設）"], 0)
     };
 
-    // 直接使用預設加密方法 AES256，跳過互動
-    let encryption_method = "aes256".to_string();
+    let layer = Select::new()
+        .with_prompt("選擇 ZIP 層數（使用方向鍵選擇，按 Enter 確認）")
+        .items(&items)
+        .default(default)
+        .interact()
+        .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("ZIP 層數選擇失敗: {}", e)))?;
 
+    Ok(match (is_compressed, layer) {
+        (true, 0) => "single".to_string(),
+        (true, 1) => "double".to_string(),
+        (false, 0) => "none".to_string(),
+        (false, 1) => "single".to_string(),
+        (false, 2) => "double".to_string(),
+        _ => unreachable!(),
+    })
+}
+
+/// 收集密碼模式和顯示選項
+fn get_password_options(layer: &str) -> io::Result<(PasswordMode, bool)> {
+    if layer == "none" {
+        return Ok((PasswordMode::None, false));
+    }
+
+    let modes = ["隨機生成（16 位，預設）", "手動輸入", "時間戳（yyyyMMddhhmmss）", "無密碼"];
+    let mode = Select::new()
+        .with_prompt("選擇密碼模式（使用方向鍵選擇，按 Enter 確認）")
+        .items(&modes)
+        .default(0)
+        .interact()
+        .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("密碼模式選擇失敗: {}", e)))?;
+
+    let password_mode = match mode {
+        0 => PasswordMode::Random,
+        1 => PasswordMode::Manual,
+        2 => PasswordMode::Timestamp,
+        3 => PasswordMode::None,
+        _ => unreachable!(),
+    };
+
+    let display_password = match mode {
+        0 => Confirm::new()
+            .with_prompt("是否在 HTML 中顯示隨機生成的密碼？（預設為是）")
+            .default(true)
+            .interact()
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("密碼顯示選項輸入失敗: {}", e)))?,
+        3 => false,
+        _ => Confirm::new()
+            .with_prompt("是否在 HTML 中顯示密碼？（預設為否，將儲存至 .key 檔案）")
+            .default(false)
+            .interact()
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("密碼顯示選項輸入失敗: {}", e)))?,
+    };
+
+    Ok((password_mode, display_password))
+}
+
+/// 收集轉換模式、密碼選項、ZIP 層數和加密方法
+fn get_conversion_mode_and_password() -> io::Result<(bool, PasswordMode, bool, String, String)> {
+    let is_compressed = get_conversion_mode()?;
+    let layer = get_zip_layer(is_compressed)?;
+    let (password_mode, display_password) = get_password_options(&layer)?;
+    let encryption_method = "aes256".to_string(); // 預設加密方法
     Ok((is_compressed, password_mode, display_password, layer, encryption_method))
 }
 
@@ -406,18 +378,6 @@ fn get_file_patterns() -> io::Result<(Vec<String>, Option<Vec<String>>)> {
         .filter(|s| !s.is_empty())
         .collect::<Vec<String>>();
 
-    // 驗證通配符格式
-    for pattern in &include {
-        if !is_valid_pattern(pattern) {
-            return Err(io::Error::new(io::ErrorKind::InvalidInput, format!("無效的包含模式: {}", pattern)));
-        }
-    }
-    for pattern in &exclude {
-        if !is_valid_pattern(pattern) {
-            return Err(io::Error::new(io::ErrorKind::InvalidInput, format!("無效的排除模式: {}", pattern)));
-        }
-    }
-
     Ok((include, if exclude.is_empty() { None } else { Some(exclude) }))
 }
 
@@ -427,7 +387,24 @@ fn is_valid_pattern(pattern: &str) -> bool {
     !pattern.is_empty() && !pattern.contains(&invalid_chars[..])
 }
 
-/// 收集壓縮選項和壓縮級別（僅個別模式需要壓縮選項）
+/// 驗證檔案過濾模式
+fn validate_file_patterns(include: &[String], exclude: &Option<Vec<String>>) -> io::Result<()> {
+    for pattern in include {
+        if !is_valid_pattern(pattern) {
+            return Err(io::Error::new(io::ErrorKind::InvalidInput, format!("無效的包含模式: {}", pattern)));
+        }
+    }
+    if let Some(exclude_patterns) = exclude {
+        for pattern in exclude_patterns {
+            if !is_valid_pattern(pattern) {
+                return Err(io::Error::new(io::ErrorKind::InvalidInput, format!("無效的排除模式: {}", pattern)));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// 收集壓縮選項（僅個別模式需要）
 fn get_compression_options(is_compressed: bool) -> io::Result<(bool, String)> {
     let compress = if !is_compressed {
         Confirm::new()
@@ -438,106 +415,95 @@ fn get_compression_options(is_compressed: bool) -> io::Result<(bool, String)> {
     } else {
         true
     };
-
-    // 直接使用預設壓縮級別 deflated，跳過互動
-    let level_str = "deflated".to_string();
-
-    Ok((compress, level_str))
+    Ok((compress, "deflated".to_string())) // 預設壓縮級別
 }
 
 /// 收集是否禁用進度條
 fn get_no_progress_option() -> io::Result<bool> {
-    // 直接返回預設值 false（不禁用進度條）
-    Ok(false)
+    Ok(false) // 預設不禁用進度條
 }
 
 /// 收集檔案大小限制
 fn get_max_size_option() -> io::Result<Option<f64>> {
-    // 直接返回預設值 None（無限制）
-    Ok(None)
+    Ok(None) // 預設無限制
 }
 
 /// 收集日誌級別
 fn get_log_level_option() -> io::Result<String> {
-    // 直接返回預設值 info
-    Ok("info".to_string())
+    Ok("info".to_string()) // 預設日誌級別
 }
 
-/// 命令列模式處理，解析 CLI 參數並執行轉換
-fn process_cli_mode() -> io::Result<String> {
-    let cli = Cli::parse();
-    let input_path = validate_input_path(&cli.input)?;
-
-    // 驗證通配符格式
-    for pattern in &cli.include {
-        if !is_valid_pattern(pattern) {
-            return Err(io::Error::new(io::ErrorKind::InvalidInput, format!("無效的包含模式: {}", pattern)));
-        }
-    }
-    if let Some(exclude) = &cli.exclude {
-        for pattern in exclude {
-            if !is_valid_pattern(pattern) {
-                return Err(io::Error::new(io::ErrorKind::InvalidInput, format!("無效的排除模式: {}", pattern)));
-            }
-        }
-    }
-
-    // 設置日誌級別
-    let log_level_filter = match cli.log_level.as_str() {
+/// 設置日誌級別
+fn setup_logging(log_level: &str) -> io::Result<()> {
+    let log_level_filter = match log_level {
         "info" => log::LevelFilter::Info,
         "warn" => log::LevelFilter::Warn,
         "error" => log::LevelFilter::Error,
         _ => log::LevelFilter::Info,
     };
-    env_logger::Builder::new().filter_level(log_level_filter).init();
+    env_logger::Builder::new()
+        .filter_level(log_level_filter)
+        .init();
+    Ok(())
+}
 
-    let (include_set, exclude_set) = create_regex_sets(&cli.include, &cli.exclude.as_deref().unwrap_or(&[]).to_vec());
-
-    // 動態設置 display_password 的預設值
-    let display_password = cli.display_password.unwrap_or_else(|| {
-        cli.password_mode == "random"
-    });
-
-    let password_mode = match cli.password_mode.as_str() {
-        "random" => PasswordMode::Random,
-        "manual" => PasswordMode::Manual,
-        "timestamp" => PasswordMode::Timestamp,
-        "none" => PasswordMode::None,
-        _ => PasswordMode::Random, // 預設為隨機密碼
-    };
-
-    // 驗證模式與層數的相容性
+/// 驗證 CLI 參數
+fn validate_cli_args(cli: &Cli) -> io::Result<()> {
+    validate_input_path(&cli.input)?;
+    validate_file_patterns(&cli.include, &cli.exclude)?;
     if matches!(cli.mode, Mode::Compressed) && cli.layer == "none" {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
             "壓縮模式下不支援 'none' 層數，請選擇 'single' 或 'double'"
         ));
     }
+    Ok(())
+}
 
-    // 在 manual 模式下提示輸入並確認密碼
+/// 處理手動密碼輸入
+fn prompt_manual_password() -> io::Result<String> {
+    let pwd = Password::new()
+        .with_prompt("請輸入 ZIP 加密密碼")
+        .interact()
+        .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("密碼輸入失敗: {}", e)))?;
+    let confirm_pwd = Password::new()
+        .with_prompt("請再次輸入密碼以確認")
+        .interact()
+        .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("密碼確認失敗: {}", e)))?;
+    if pwd != confirm_pwd {
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, "密碼不匹配"));
+    }
+    Ok(pwd)
+}
+
+/// 命令列模式處理，解析 CLI 參數並執行轉換
+fn process_cli_mode() -> io::Result<String> {
+    let cli = Cli::parse();
+    validate_cli_args(&cli)?;
+    setup_logging(&cli.log_level)?;
+
+    let (include_set, exclude_set) = create_regex_sets(&cli.include, &cli.exclude.as_deref().unwrap_or(&[]).to_vec());
+    let display_password = cli.display_password.unwrap_or_else(|| cli.password_mode == "random");
+    let password_mode = match cli.password_mode.as_str() {
+        "random" => PasswordMode::Random,
+        "manual" => PasswordMode::Manual,
+        "timestamp" => PasswordMode::Timestamp,
+        "none" => PasswordMode::None,
+        _ => PasswordMode::Random,
+    };
+
     let preset_password = if cli.password_mode == "manual" {
-        let pwd = Password::new()
-            .with_prompt("請輸入 ZIP 加密密碼")
-            .interact()
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("密碼輸入失敗: {}", e)))?;
-        let confirm_pwd = Password::new()
-            .with_prompt("請再次輸入密碼以確認")
-            .interact()
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("密碼確認失敗: {}", e)))?;
-        if pwd != confirm_pwd {
-            return Err(io::Error::new(io::ErrorKind::InvalidInput, "密碼不匹配"));
-        }
-        Some(pwd)
+        Some(prompt_manual_password()?)
     } else {
         None
     };
 
     match cli.mode {
         Mode::Individual => {
-            info!("開始個別轉換，輸入路徑：{}，輸出目錄：{}，包含模式：{:?}", 
+            info!("開始個別轉換，輸入路徑：{}，輸出目錄：{}，包含模式：{:?}",
                   cli.input, cli.output, cli.include);
             process_individual(
-                input_path,
+                Path::new(&cli.input),
                 &cli.output,
                 &include_set,
                 &exclude_set,
@@ -553,10 +519,10 @@ fn process_cli_mode() -> io::Result<String> {
             )?;
         }
         Mode::Compressed => {
-            info!("開始壓縮轉換，輸入路徑：{}，輸出目錄：{}，包含模式：{:?}", 
+            info!("開始壓縮轉換，輸入路徑：{}，輸出目錄：{}，包含模式：{:?}",
                   cli.input, cli.output, cli.include);
             process_compressed(
-                input_path,
+                Path::new(&cli.input),
                 &cli.output,
                 &include_set,
                 &exclude_set,
@@ -575,10 +541,10 @@ fn process_cli_mode() -> io::Result<String> {
     Ok(cli.output)
 }
 
-/// 執行轉換，根據模式處理檔案
+/// 執行轉換，根據模式分派處理
 fn execute_conversion(
-    input: String,
-    output: String,
+    input: &str,
+    output: &str,
     is_compressed: bool,
     compress: bool,
     include: &[String],
@@ -591,14 +557,14 @@ fn execute_conversion(
     no_progress: bool,
     max_size: Option<f64>,
 ) -> io::Result<String> {
-    let input_path = validate_input_path(&input)?;
+    let input_path = validate_input_path(input)?;
     let (include_set, exclude_set) = create_regex_sets(include, exclude);
 
     if is_compressed {
         info!("開始壓縮轉換，輸入路徑：{}，輸出目錄：{}", input, output);
         process_compressed(
             input_path,
-            &output,
+            output,
             &include_set,
             &exclude_set,
             password_mode,
@@ -608,13 +574,13 @@ fn execute_conversion(
             encryption_method,
             no_progress,
             max_size,
-            None, // 互動模式不預設密碼
+            None,
         )?;
     } else {
         info!("開始個別轉換，輸入路徑：{}，輸出目錄：{}", input, output);
         process_individual(
             input_path,
-            &output,
+            output,
             &include_set,
             &exclude_set,
             compress,
@@ -625,11 +591,11 @@ fn execute_conversion(
             encryption_method,
             no_progress,
             max_size,
-            None, // 互動模式不預設密碼
+            None,
         )?;
     }
 
-    Ok(output)
+    Ok(output.to_string())
 }
 
 /// 驗證輸入路徑是否存在
@@ -637,10 +603,7 @@ fn validate_input_path(input: &str) -> io::Result<&Path> {
     let path = Path::new(input);
     if !path.exists() {
         error!("輸入路徑不存在：{}", input);
-        return Err(io::Error::new(
-            io::ErrorKind::NotFound,
-            format!("輸入路徑 '{}' 不存在", input)
-        ));
+        return Err(io::Error::new(io::ErrorKind::NotFound, format!("輸入路徑 '{}' 不存在", input)));
     }
     Ok(path)
 }
@@ -669,7 +632,7 @@ fn create_regex_sets(include: &[String], exclude: &[String]) -> (RegexSet, Regex
     (include_set, exclude_set)
 }
 
-/// 生成隨機密碼，長度為指定位數
+/// 生成隨機密碼
 fn generate_random_password(length: usize) -> String {
     rand::thread_rng()
         .sample_iter(&Alphanumeric)
@@ -687,7 +650,7 @@ fn format_file_size(size: usize) -> String {
     }
 }
 
-/// 創建未加密 ZIP 緩衝區，用於內層 ZIP 的原始資料（單層模式或無密碼時使用）
+/// 創建未加密的單檔案 ZIP
 fn create_zip_buffer(file_name: &str, data: &[u8], options: FileOptions<()>) -> io::Result<Vec<u8>> {
     let mut zip_buffer = Vec::new();
     let mut zip = ZipWriter::new(std::io::Cursor::new(&mut zip_buffer));
@@ -697,17 +660,12 @@ fn create_zip_buffer(file_name: &str, data: &[u8], options: FileOptions<()>) -> 
     Ok(zip_buffer)
 }
 
-/// 獲取密碼，根據模式生成或輸入，統一處理密碼邏輯
-fn get_password(password_mode: PasswordMode, preset_password: Option<String>) -> io::Result<Option<String>> {
+/// 生成密碼
+fn generate_password(password_mode: &PasswordMode, preset_password: Option<String>) -> io::Result<Option<String>> {
     match password_mode {
-        PasswordMode::Random => {
-            let pwd = generate_random_password(16);
-            info!("生成隨機密碼：{}", pwd);
-            Ok(Some(pwd))
-        }
+        PasswordMode::Random => Ok(Some(generate_random_password(16))),
         PasswordMode::Manual => {
             if let Some(pwd) = preset_password {
-                info!("使用預設手動輸入密碼");
                 Ok(Some(pwd))
             } else {
                 let pwd = Password::new()
@@ -721,24 +679,47 @@ fn get_password(password_mode: PasswordMode, preset_password: Option<String>) ->
                 if pwd != confirm_pwd {
                     Err(io::Error::new(io::ErrorKind::InvalidInput, "密碼不匹配"))
                 } else {
-                    info!("使用手動輸入密碼");
                     Ok(Some(pwd))
                 }
             }
         }
-        PasswordMode::Timestamp => {
-            let pwd = Local::now().format("%Y%m%d%H%M%S").to_string();
-            info!("使用時間戳密碼：{}", pwd);
-            Ok(Some(pwd))
-        }
-        PasswordMode::None => {
-            info!("選擇無密碼模式，ZIP 不加密");
-            Ok(None)
-        }
+        PasswordMode::Timestamp => Ok(Some(Local::now().format("%Y%m%d%H%M%S").to_string())),
+        PasswordMode::None => Ok(None),
     }
 }
 
-/// 生成 HTML 內容，集中管理模板替換邏輯
+/// 生成解壓說明
+fn generate_instructions(layer: &str, has_password: bool) -> String {
+    match (layer, has_password) {
+        ("double", true) => "<p>請使用下載連結或複製 Base64 資料手動解碼為 ZIP 檔案，然後使用密碼解壓外層和內層 ZIP（使用相同密碼）。建議使用 7-Zip 或 WinRAR。</p>".to_string(),
+        ("double", false) => "<p>請使用下載連結或複製 Base64 資料手動解碼為 ZIP 檔案，然後無需密碼解壓外層和內層 ZIP。建議使用 7-Zip 或 WinRAR。</p>".to_string(),
+        ("single", true) => "<p>請使用下載連結或複製 Base64 資料手動解碼為 ZIP 檔案，然後使用密碼解壓 ZIP。建議使用 7-Zip 或 WinRAR。</p>".to_string(),
+        ("single", false) => "<p>請使用下載連結或複製 Base64 資料手動解碼為 ZIP 檔案，然後無需密碼解壓 ZIP。建議使用 7-Zip 或 WinRAR。</p>".to_string(),
+        _ => "<p>請使用下載連結或複製 Base64 資料手動解碼為檔案，無需解壓。</p>".to_string(),
+    }
+}
+
+/// 處理密碼顯示或儲存
+fn handle_password_display(
+    password: Option<&str>,
+    display_password: bool,
+    file_name: &str,
+    output_dir: &str,
+) -> io::Result<(String, String)> {
+    if let Some(pwd) = password {
+        if display_password {
+            Ok(("下方密碼".to_string(), format!("<p>密碼：<span class=\"password-display\">{}</span></p>", pwd)))
+        } else {
+            let key_file = format!("{}.html.key", file_name);
+            fs::write(Path::new(output_dir).join(&key_file), pwd)?;
+            Ok((format!("{}.html.key 檔案", file_name), "".to_string()))
+        }
+    } else {
+        Ok(("無需密碼".to_string(), "".to_string()))
+    }
+}
+
+/// 生成 HTML 內容
 fn generate_html_content(
     zip_base64: &str,
     file_name: &str,
@@ -758,41 +739,123 @@ fn generate_html_content(
         .replace("{{PASSWORD_DISPLAY}}", password_display)
 }
 
-/// 根據層數和密碼生成指令和顯示文字，統一處理邏輯
-fn get_instructions_and_password_display(
-    layer: &str,
-    password: Option<&str>,
-    display_password: bool,
-    file_name: &str,
-    output_dir: &str,
-) -> io::Result<(String, String, String)> {
-    let (password_info, password_display, instructions) = if let Some(pwd) = password {
-        let (info, display) = if display_password {
-            ("下方密碼".to_string(), format!("<p>密碼：<span class=\"password-display\">{}</span></p>", pwd))
-        } else {
-            let key_file = format!("{}.html.key", file_name);
-            fs::write(Path::new(output_dir).join(&key_file), pwd)?;
-            info!("密碼已儲存至：{}", key_file);
-            (format!("{}.html.key 檔案", file_name), "".to_string())
-        };
-        let instr = match layer {
-            "double" => "<p>請使用下載連結或複製 Base64 資料手動解碼為 ZIP 檔案，然後使用密碼解壓外層和內層 ZIP（使用相同密碼）。建議使用 7-Zip 或 WinRAR。</p>".to_string(),
-            "single" => "<p>請使用下載連結或複製 Base64 資料手動解碼為 ZIP 檔案，然後使用密碼解壓 ZIP。建議使用 7-Zip 或 WinRAR。</p>".to_string(),
-            _ => "<p>請使用下載連結或複製 Base64 資料手動解碼為檔案，無需解壓。</p>".to_string(),
-        };
-        (info, display, instr)
-    } else {
-        let instr = match layer {
-            "double" => "<p>請使用下載連結或複製 Base64 資料手動解碼為 ZIP 檔案，然後無需密碼解壓外層和內層 ZIP。建議使用 7-Zip 或 WinRAR。</p>".to_string(),
-            "single" => "<p>請使用下載連結或複製 Base64 資料手動解碼為 ZIP 檔案，然後無需密碼解壓 ZIP。建議使用 7-Zip 或 WinRAR。</p>".to_string(),
-            _ => "<p>請使用下載連結或複製 Base64 資料手動解碼為檔案，無需解壓。</p>".to_string(),
-        };
-        ("無需密碼".to_string(), "".to_string(), instr)
-    };
-    Ok((password_info, password_display, instructions))
+/// 讀取檔案內容
+fn read_file_content(file_path: &Path) -> io::Result<(Vec<u8>, usize)> {
+    let mut file = File::open(file_path)?;
+    let mut buffer = Vec::new();
+    file.read_to_end(&mut buffer)?;
+    let file_size = buffer.len();
+    Ok((buffer, file_size))
 }
 
-/// 將單一檔案轉換為 ZIP 的 HTML 文件（單層或雙層 ZIP，可選擇加密）
+/// 壓縮檔案內容
+fn compress_file_content(
+    data: &[u8],
+    file_name: &str,
+    compression_level: &str,
+    password: Option<&str>,
+    aes_mode: AesMode,
+) -> io::Result<Vec<u8>> {
+    let mut zip_buffer = Vec::new();
+    let mut zip = ZipWriter::new(std::io::Cursor::new(&mut zip_buffer));
+    if let Some(pwd) = password {
+        let options: FileOptions<zip::write::ExtendedFileOptions> = FileOptions::default()
+            .compression_method(if compression_level == "stored" {
+                CompressionMethod::Stored
+            } else {
+                CompressionMethod::Deflated
+            })
+            .with_aes_encryption(aes_mode, pwd);
+        zip.start_file(file_name.to_string(), options)?;
+    } else {
+        let options: FileOptions<()> = FileOptions::default()
+            .compression_method(if compression_level == "stored" {
+                CompressionMethod::Stored
+            } else {
+                CompressionMethod::Deflated
+            });
+        zip.start_file(file_name.to_string(), options)?;
+    }
+    zip.write_all(data)?;
+    zip.finish()?;
+    Ok(zip_buffer)
+}
+
+/// 創建單層或雙層 ZIP
+fn create_zip(
+    data: &[u8],
+    file_name: &str,
+    layer: &str,
+    password: Option<&str>,
+    aes_mode: AesMode,
+) -> io::Result<Vec<u8>> {
+    if layer == "double" {
+        // 直接創建外層 ZIP，包裝輸入數據
+        let mut outer_zip_buffer = Vec::new();
+        let mut outer_zip = ZipWriter::new(std::io::Cursor::new(&mut outer_zip_buffer));
+        if let Some(pwd) = password {
+            let outer_options: FileOptions<zip::write::ExtendedFileOptions> = FileOptions::default()
+                .compression_method(CompressionMethod::Deflated)
+                .with_aes_encryption(aes_mode, pwd);
+            outer_zip.start_file(format!("{}_outer.zip", file_name), outer_options)?;
+            outer_zip.write_all(data)?;
+            outer_zip.finish()?;
+            info!("生成外層加密 ZIP，密碼：{}，大小：{} 位元組", pwd, outer_zip_buffer.len());
+        } else {
+            let outer_options: FileOptions<()> = FileOptions::default()
+                .compression_method(CompressionMethod::Deflated);
+            outer_zip.start_file(format!("{}_outer.zip", file_name), outer_options)?;
+            outer_zip.write_all(data)?;
+            outer_zip.finish()?;
+            info!("生成外層無密碼 ZIP，大小：{} 位元組", outer_zip_buffer.len());
+        }
+        Ok(outer_zip_buffer)
+    } else if layer == "single" {
+        let mut zip_buffer = Vec::new();
+        let mut zip = ZipWriter::new(std::io::Cursor::new(&mut zip_buffer));
+        if let Some(pwd) = password {
+            let options: FileOptions<zip::write::ExtendedFileOptions> = FileOptions::default()
+                .compression_method(CompressionMethod::Deflated)
+                .with_aes_encryption(aes_mode, pwd);
+            zip.start_file(format!("{}.zip", file_name), options)?;
+            zip.write_all(data)?;
+            zip.finish()?;
+            info!("生成單層加密 ZIP，密碼：{}，大小：{} 位元組", pwd, zip_buffer.len());
+        } else {
+            let options: FileOptions<()> = FileOptions::default()
+                .compression_method(CompressionMethod::Deflated);
+            zip.start_file(format!("{}.zip", file_name), options)?;
+            zip.write_all(data)?;
+            zip.finish()?;
+            info!("生成單層無密碼 ZIP，大小：{} 位元組", zip_buffer.len());
+        }
+        Ok(zip_buffer)
+    } else {
+        Ok(data.to_vec())
+    }
+}
+
+/// 將資料轉為 Base64 並檢查大小
+fn encode_to_base64(data: &[u8], file_path: &Path) -> io::Result<String> {
+    let zip_base64 = general_purpose::STANDARD.encode(data);
+    const MAX_BASE64_SIZE: usize = 1_000_000; // 約 1MB
+    if zip_base64.len() > MAX_BASE64_SIZE {
+        warn!(
+            "Base64 資料過大：{} 位元組，超過建議限制 {} 位元組，可能影響顯示或下載：{}",
+            zip_base64.len(), MAX_BASE64_SIZE, file_path.display()
+        );
+    }
+    Ok(zip_base64)
+}
+
+/// 寫入 HTML 檔案
+fn write_html_file(html_content: &str, output_dir: &str, file_name: &str) -> io::Result<()> {
+    let output_path = Path::new(output_dir).join(format!("{}.html", file_name));
+    fs::write(&output_path, html_content)?;
+    Ok(())
+}
+
+/// 將單一檔案轉換為 HTML 文件
 fn convert_file_to_html(
     file_path: &Path,
     output_dir: &str,
@@ -803,132 +866,91 @@ fn convert_file_to_html(
     layer: &str,
     encryption_method: &str,
 ) -> io::Result<()> {
-    // 讀取檔案內容
-    let mut file = File::open(file_path)?;
-    let mut buffer = Vec::new();
-    file.read_to_end(&mut buffer)?;
-    let file_size = buffer.len();
-    info!("讀取檔案：{}，原始大小：{} 位元組", file_path.display(), file_size);
-
-    // 準備檔案名稱和下載名稱
     let file_name = file_path.file_name().unwrap().to_string_lossy();
     let download_zip_name = if layer == "none" {
         file_name.to_string()
+    } else if layer == "single" {
+        format!("{}.zip", file_name)
     } else {
         format!("{}_outer.zip", file_name)
     };
 
-    // 處理原始或壓縮後的資料
-    let inner_zip_data = if compress && layer != "none" {
-        let options: FileOptions<()> = if compression_level == "stored" {
-            FileOptions::default().compression_method(CompressionMethod::Stored)
-        } else {
-            FileOptions::default().compression_method(CompressionMethod::Deflated)
-        };
-        let zip_buffer = create_zip_buffer(&file_name, &buffer, options)?;
-        info!("壓縮檔案至內層 ZIP：{}，壓縮後大小：{} 位元組", file_path.display(), zip_buffer.len());
-        zip_buffer
-    } else {
-        info!("未壓縮檔案：{}，直接使用原始資料", file_path.display());
-        buffer
-    };
+    // 讀取檔案內容
+    let (mut data, file_size) = read_file_content(file_path)?;
+    info!("讀取檔案：{}，原始大小：{} 位元組", file_path.display(), file_size);
 
     // 選擇加密方法
     let aes_mode = match encryption_method {
         "aes128" => AesMode::Aes128,
         "aes192" => AesMode::Aes192,
         "aes256" => AesMode::Aes256,
-        _ => AesMode::Aes256, // 預設值
+        _ => AesMode::Aes256,
     };
 
-    // 創建最終 ZIP（單層、雙層或不壓縮）
-    let final_zip_buffer = if layer == "double" {
-        let mut inner_zip_buffer = Vec::new();
-        let mut inner_zip = ZipWriter::new(std::io::Cursor::new(&mut inner_zip_buffer));
-        if let Some(ref pwd) = password {
-            let inner_options: FileOptions<zip::write::ExtendedFileOptions> = FileOptions::default()
-                .compression_method(CompressionMethod::Deflated)
-                .with_aes_encryption(aes_mode, pwd);
-            inner_zip.start_file(file_name.to_string(), inner_options)?;
-            inner_zip.write_all(&inner_zip_data)?;
-            inner_zip.finish()?;
-            info!("生成內層加密 ZIP，密碼：{}，大小：{} 位元組", pwd, inner_zip_buffer.len());
+    // 創建最終 ZIP
+    let final_zip_buffer = if layer == "single" {
+        // 單層壓縮：直接生成單層 ZIP
+        let options: FileOptions<()> = if compression_level == "stored" {
+            FileOptions::default().compression_method(CompressionMethod::Stored)
         } else {
-            let inner_options: FileOptions<()> = FileOptions::default()
-                .compression_method(CompressionMethod::Deflated);
-            inner_zip.start_file(file_name.to_string(), inner_options)?;
-            inner_zip.write_all(&inner_zip_data)?;
-            inner_zip.finish()?;
-            info!("生成內層無密碼 ZIP，大小：{} 位元組", inner_zip_buffer.len());
-        }
-
-        let mut outer_zip_buffer = Vec::new();
-        let mut outer_zip = ZipWriter::new(std::io::Cursor::new(&mut outer_zip_buffer));
+            FileOptions::default().compression_method(CompressionMethod::Deflated)
+        };
         if let Some(ref pwd) = password {
-            let outer_options: FileOptions<zip::write::ExtendedFileOptions> = FileOptions::default()
+            let mut zip_buffer = Vec::new();
+            let mut zip = ZipWriter::new(std::io::Cursor::new(&mut zip_buffer));
+            let encrypt_options: FileOptions<zip::write::ExtendedFileOptions> = FileOptions::default()
                 .compression_method(CompressionMethod::Deflated)
                 .with_aes_encryption(aes_mode, pwd);
-            outer_zip.start_file(format!("{}.zip", file_name), outer_options)?;
-            outer_zip.write_all(&inner_zip_buffer)?;
-            outer_zip.finish()?;
-            info!("生成外層加密 ZIP，密碼：{}，大小：{} 位元組", pwd, outer_zip_buffer.len());
-        } else {
-            let outer_options: FileOptions<()> = FileOptions::default()
-                .compression_method(CompressionMethod::Deflated);
-            outer_zip.start_file(format!("{}.zip", file_name), outer_options)?;
-            outer_zip.write_all(&inner_zip_buffer)?;
-            outer_zip.finish()?;
-            info!("生成外層無密碼 ZIP，大小：{} 位元組", outer_zip_buffer.len());
-        }
-        outer_zip_buffer
-    } else if layer == "single" {
-        let mut zip_buffer = Vec::new();
-        let mut zip = ZipWriter::new(std::io::Cursor::new(&mut zip_buffer));
-        if let Some(ref pwd) = password {
-            let options: FileOptions<zip::write::ExtendedFileOptions> = FileOptions::default()
-                .compression_method(CompressionMethod::Deflated)
-                .with_aes_encryption(aes_mode, pwd);
-            zip.start_file(file_name.to_string(), options)?;
-            zip.write_all(&inner_zip_data)?;
+            zip.start_file(file_name.to_string(), encrypt_options)?;
+            zip.write_all(&data)?;
             zip.finish()?;
             info!("生成單層加密 ZIP，密碼：{}，大小：{} 位元組", pwd, zip_buffer.len());
+            zip_buffer
         } else {
-            let options: FileOptions<()> = FileOptions::default()
-                .compression_method(CompressionMethod::Deflated);
-            zip.start_file(file_name.to_string(), options)?;
-            zip.write_all(&inner_zip_data)?;
-            zip.finish()?;
+            let zip_buffer = if compress {
+                create_zip_buffer(&file_name, &data, options)?
+            } else {
+                data
+            };
             info!("生成單層無密碼 ZIP，大小：{} 位元組", zip_buffer.len());
+            zip_buffer
         }
-        zip_buffer
     } else {
-        inner_zip_data
+        // 雙層壓縮或不壓縮
+        let inner_data = if compress && layer != "none" {
+            let zip_buffer = compress_file_content(&data, &file_name, compression_level, password.as_deref(), aes_mode)?;
+            info!("壓縮檔案至內層 ZIP：{}，壓縮後大小：{} 位元組", file_path.display(), zip_buffer.len());
+            if let Some(ref pwd) = password {
+                info!("內層 ZIP 使用密碼：{}", pwd);
+            }
+            zip_buffer
+        } else {
+            info!("未壓縮檔案：{}，直接使用原始資料", file_path.display());
+            data
+        };
+        create_zip(&inner_data, &file_name, layer, password.as_deref(), aes_mode)?
     };
 
-    // 將最終資料轉為 Base64
-    let zip_base64 = general_purpose::STANDARD.encode(&final_zip_buffer);
+    // 轉為 Base64
+    let zip_base64 = encode_to_base64(&final_zip_buffer, file_path)?;
     info!("生成最終資料的 Base64，總大小：{} 位元組", zip_base64.len());
 
-    // 檢查 Base64 資料大小（建議 <1MB）
-    const MAX_BASE64_SIZE: usize = 1_000_000; // 約 1MB
-    if zip_base64.len() > MAX_BASE64_SIZE {
-        warn!(
-            "Base64 資料過大：{} 位元組，超過建議限制 {} 位元組，可能影響顯示或下載：{}",
-            zip_base64.len(), MAX_BASE64_SIZE, file_path.display()
-        );
-    }
+    // 生成解壓說明
+    let instructions = generate_instructions(layer, password.is_some());
 
-    // 格式化檔案大小
-    let file_size_str = format_file_size(file_size);
-
-    // 處理密碼顯示和解壓說明
-    let (password_info, password_display, instructions) = get_instructions_and_password_display(
-        layer,
+    // 處理密碼顯示
+    let (password_info, password_display) = handle_password_display(
         password.as_deref(),
         display_password,
         &file_name,
         output_dir,
     )?;
+    if password.is_some() && !display_password {
+        info!("密碼已儲存至：{}.html.key", file_name);
+    }
+
+    // 格式化檔案大小
+    let file_size_str = format_file_size(file_size);
 
     // 生成 HTML 內容
     let html_content = generate_html_content(
@@ -941,10 +963,207 @@ fn convert_file_to_html(
         &password_display,
     );
 
-    // 寫入 HTML 文件
-    let output_path = Path::new(output_dir).join(format!("{}.html", file_name));
-    fs::write(&output_path, &html_content)?;
-    info!("生成 HTML 文件：{}，大小：{} 位元組", output_path.display(), html_content.len());
+    // 寫入 HTML 檔案
+    write_html_file(&html_content, output_dir, &file_name)?;
+    info!("生成 HTML 文件：{}/{}.html，大小：{} 位元組", output_dir, file_name, html_content.len());
+
+    Ok(())
+}
+
+/// 創建進度條
+fn create_progress_bar(total: u64, no_progress: bool) -> ProgressBar {
+    if no_progress {
+        ProgressBar::hidden()
+    } else {
+        let pb = ProgressBar::new(total);
+        pb.set_style(ProgressStyle::default_bar().template("{msg} [{bar:40}] {pos}/{len}").unwrap());
+        pb
+    }
+}
+
+/// 驗證檔案是否符合條件
+fn is_file_valid(
+    path: &Path,
+    include_set: &RegexSet,
+    exclude_set: &RegexSet,
+    max_size: Option<f64>,
+) -> io::Result<bool> {
+    let path_str = path.to_string_lossy();
+    if !include_set.is_match(&path_str) || exclude_set.is_match(&path_str) {
+        return Ok(false);
+    }
+    if let Some(max) = max_size {
+        let file_size = fs::metadata(path)?.len() as f64 / 1_048_576.0; // 轉換為 MB
+        if file_size > max {
+            warn!("檔案 {} 超過大小限制（{} MB > {} MB），跳過", path.display(), file_size, max);
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+/// 收集符合條件的檔案
+fn collect_files(
+    path: &Path,
+    files: &mut Vec<PathBuf>,
+    include_set: &RegexSet,
+    exclude_set: &RegexSet,
+    max_size: Option<f64>,
+) -> io::Result<()> {
+    if path.is_file() {
+        if is_file_valid(path, include_set, exclude_set, max_size)? {
+            files.push(path.to_path_buf());
+        }
+    } else if path.is_dir() {
+        for entry in fs::read_dir(path)? {
+            collect_files(&entry?.path(), files, include_set, exclude_set, max_size)?;
+        }
+    }
+    Ok(())
+}
+
+/// 收集檔案並計算總大小
+fn collect_and_measure_files(
+    input_path: &Path,
+    include_set: &RegexSet,
+    exclude_set: &RegexSet,
+    max_size: Option<f64>,
+) -> io::Result<(Vec<PathBuf>, usize)> {
+    let mut files = Vec::new();
+    collect_files(input_path, &mut files, include_set, exclude_set, max_size)?;
+    if files.is_empty() {
+        return Err(io::Error::new(io::ErrorKind::Other, "無有效檔案可壓縮"));
+    }
+
+    let mut total_size = 0;
+    for file_path in &files {
+        let (data, _) = read_file_content(file_path)?;
+        total_size += data.len();
+    }
+
+    Ok((files, total_size))
+}
+
+/// 創建內層 ZIP
+fn create_inner_zip(
+    input_path: &Path,
+    files: &[PathBuf],
+    options: FileOptions<()>,
+    password: Option<&str>,
+    aes_mode: AesMode,
+) -> io::Result<Vec<u8>> {
+    let mut inner_zip_buffer = Vec::new();
+    let mut inner_zip = ZipWriter::new(std::io::Cursor::new(&mut inner_zip_buffer));
+    for file_path in files {
+        if let Some(relative_path) = diff_paths(file_path, input_path.parent().unwrap_or(input_path)) {
+            let relative_path_str = relative_path.to_string_lossy().replace("\\", "/").trim_start_matches("./").to_string();
+            let (data, _) = read_file_content(file_path)?;
+            if let Some(pwd) = password {
+                let encrypt_options: FileOptions<zip::write::ExtendedFileOptions> = FileOptions::default()
+                    .compression_method(CompressionMethod::Deflated)
+                    .with_aes_encryption(aes_mode, pwd);
+                inner_zip.start_file(&relative_path_str, encrypt_options)?;
+            } else {
+                inner_zip.start_file(&relative_path_str, options.clone())?;
+            }
+            inner_zip.write_all(&data)?;
+        }
+    }
+    inner_zip.finish()?;
+    Ok(inner_zip_buffer)
+}
+
+/// 壓縮模式處理，將多個檔案壓縮為單一 ZIP 並嵌入 HTML
+fn process_compressed(
+    input_path: &Path,
+    output_dir: &str,
+    include_set: &RegexSet,
+    exclude_set: &RegexSet,
+    password_mode: PasswordMode,
+    display_password: bool,
+    compression_level: &str,
+    layer: &str,
+    encryption_method: &str,
+    no_progress: bool,
+    max_size: Option<f64>,
+    preset_password: Option<String>,
+) -> io::Result<()> {
+    fs::create_dir_all(output_dir)?;
+    let options: FileOptions<()> = if compression_level == "stored" {
+        FileOptions::default().compression_method(CompressionMethod::Stored)
+    } else {
+        FileOptions::default().compression_method(CompressionMethod::Deflated)
+    };
+
+    let (files, total_size) = collect_and_measure_files(input_path, include_set, exclude_set, max_size)?;
+    let total_files = files.len();
+    info!("開始壓縮 {} 個檔案（內層 ZIP）", total_files);
+
+    let password = generate_password(&password_mode, preset_password)?;
+    if let Some(ref pwd) = password {
+        info!("使用密碼：{}", pwd);
+    } else {
+        info!("選擇無密碼模式，ZIP 不加密");
+    }
+
+    let aes_mode = match encryption_method {
+        "aes128" => AesMode::Aes128,
+        "aes192" => AesMode::Aes192,
+        "aes256" => AesMode::Aes256,
+        _ => AesMode::Aes256,
+    };
+
+    let pb = create_progress_bar(total_files as u64, no_progress);
+    let inner_zip_buffer = create_inner_zip(input_path, &files, options, password.as_deref(), aes_mode)?;
+    for (index, file_path) in files.iter().enumerate() {
+        pb.set_message(format!("壓縮檔案 {}/{}：{}", index + 1, total_files, file_path.display()));
+        if index % 10 == 0 || index == total_files - 1 {
+            pb.set_position((index + 1) as u64);
+        }
+    }
+    pb.finish_with_message("內層 ZIP 壓縮完成");
+    info!("內層 ZIP 壓縮完成，共處理 {} 個檔案，總大小：{} 位元組", total_files, total_size);
+    if let Some(ref pwd) = password {
+        info!("內層 ZIP 使用密碼：{}", pwd);
+    }
+
+    let file_name = input_path.file_name().unwrap_or(std::ffi::OsStr::new("archive")).to_string_lossy().to_string();
+    let final_zip_buffer = if layer == "double" {
+        // 雙層壓縮：使用 create_zip 生成雙層 ZIP
+        create_zip(&inner_zip_buffer, &file_name, layer, password.as_deref(), aes_mode)?
+    } else {
+        // 單層壓縮：直接使用內層 ZIP
+        inner_zip_buffer
+    };
+
+    let zip_base64 = encode_to_base64(&final_zip_buffer, input_path)?;
+    info!("生成最終 ZIP 的 Base64，總大小：{} 位元組", zip_base64.len());
+
+    let instructions = generate_instructions(layer, password.is_some());
+    let (password_info, password_display) = handle_password_display(
+        password.as_deref(),
+        display_password,
+        &file_name,
+        output_dir,
+    )?;
+    if password.is_some() && !display_password {
+        info!("密碼已儲存至：{}.html.key", file_name);
+    }
+
+    let file_size_str = format_file_size(total_size);
+    let html_content = generate_html_content(
+        &zip_base64,
+        &file_name,
+        &format!("{}_outer.zip", file_name),
+        &instructions,
+        &file_size_str,
+        &password_info,
+        &password_display,
+    );
+
+    write_html_file(&html_content, output_dir, &file_name)?;
+    info!("生成 HTML 文件：{}/{}.html，大小：{} 位元組", output_dir, file_name, html_content.len());
+
     Ok(())
 }
 
@@ -975,18 +1194,14 @@ fn process_individual(
         return Ok(());
     }
 
-    // 統一生成密碼，適用於所有檔案
-    let password = get_password(password_mode, preset_password)?;
-
-    let pb = if no_progress {
-        ProgressBar::hidden()
+    let password = generate_password(&password_mode, preset_password)?;
+    if let Some(ref pwd) = password {
+        info!("使用密碼：{}", pwd);
     } else {
-        let pb = ProgressBar::new(total_files as u64);
-        pb.set_style(ProgressStyle::default_bar().template("{msg} [{bar:40}] {pos}/{len}").unwrap());
-        pb
-    };
+        info!("選擇無密碼模式，ZIP 不加密");
+    }
 
-    // 處理每個檔案，記錄錯誤但繼續處理
+    let pb = create_progress_bar(total_files as u64, no_progress);
     for (i, file_path) in files.iter().enumerate() {
         pb.set_message(format!("處理檔案 {}/{}：{}", i + 1, total_files, file_path.display()));
         if let Err(e) = convert_file_to_html(
@@ -1005,220 +1220,5 @@ fn process_individual(
         }
     }
     pb.finish_with_message("處理完成");
-    Ok(())
-}
-
-/// 收集符合條件的檔案
-fn collect_files(
-    path: &Path,
-    files: &mut Vec<PathBuf>,
-    include_set: &RegexSet,
-    exclude_set: &RegexSet,
-    max_size: Option<f64>,
-) -> io::Result<()> {
-    if path.is_file() {
-        let path_str = path.to_string_lossy();
-        if include_set.is_match(&path_str) && !exclude_set.is_match(&path_str) {
-            if let Some(max) = max_size {
-                let file_size = fs::metadata(path)?.len() as f64 / 1_048_576.0; // 轉換為 MB
-                if file_size > max {
-                    warn!("檔案 {} 超過大小限制（{} MB > {} MB），跳過", path.display(), file_size, max);
-                    return Ok(());
-                }
-            }
-            files.push(path.to_path_buf());
-        }
-    } else if path.is_dir() {
-        for entry in fs::read_dir(path)? {
-            let entry = entry?;
-            collect_files(&entry.path(), files, include_set, exclude_set, max_size)?;
-        }
-    }
-    Ok(())
-}
-
-/// 創建內層 ZIP 緩衝區（未加密）
-fn create_inner_zip(
-    input_path: &Path,
-    files: &[PathBuf],
-    options: FileOptions<()>,
-    pb: &ProgressBar,
-) -> io::Result<Vec<u8>> {
-    let mut inner_zip_buffer = Vec::new();
-    let mut inner_zip = ZipWriter::new(std::io::Cursor::new(&mut inner_zip_buffer));
-    for (index, file_path) in files.iter().enumerate() {
-        if let Some(relative_path) = diff_paths(file_path, input_path.parent().unwrap_or(input_path)) {
-            let relative_path_str = relative_path.to_string_lossy().replace("\\", "/").trim_start_matches("./").to_string();
-            let mut file = File::open(file_path)?;
-            let mut buffer = Vec::new();
-            file.read_to_end(&mut buffer)?;
-            pb.set_message(format!("壓縮檔案 {}/{}：{}", index + 1, files.len(), relative_path_str));
-            inner_zip.start_file(&relative_path_str, options.clone())?;
-            inner_zip.write_all(&buffer)?;
-            if index % 10 == 0 || index == files.len() - 1 {
-                pb.set_position((index + 1) as u64);
-            }
-        }
-    }
-    inner_zip.finish()?;
-    Ok(inner_zip_buffer)
-}
-
-/// 創建外層 ZIP 緩衝區（可選擇加密）
-fn create_outer_zip(
-    inner_buffer: &[u8],
-    file_name: &str,
-    password: Option<&str>,
-    aes_mode: AesMode,
-) -> io::Result<Vec<u8>> {
-    let mut outer_zip_buffer = Vec::new();
-    let mut outer_zip = ZipWriter::new(std::io::Cursor::new(&mut outer_zip_buffer));
-    if let Some(pwd) = password {
-        let outer_options: FileOptions<zip::write::ExtendedFileOptions> = FileOptions::default()
-            .compression_method(CompressionMethod::Deflated)
-            .with_aes_encryption(aes_mode, pwd);
-        outer_zip.start_file(format!("{}_outer.zip", file_name), outer_options)?;
-        outer_zip.write_all(inner_buffer)?;
-        outer_zip.finish()?;
-        info!("生成外層加密 ZIP，密碼：{}，大小：{} 位元組", pwd, outer_zip_buffer.len());
-    } else {
-        let outer_options: FileOptions<()> = FileOptions::default()
-            .compression_method(CompressionMethod::Deflated);
-        outer_zip.start_file(format!("{}_outer.zip", file_name), outer_options)?;
-        outer_zip.write_all(inner_buffer)?;
-        outer_zip.finish()?;
-        info!("生成外層無密碼 ZIP，大小：{} 位元組", outer_zip_buffer.len());
-    }
-    Ok(outer_zip_buffer)
-}
-
-/// 壓縮模式處理，將多個檔案壓縮為單一 ZIP 並嵌入 HTML（單層或雙層 ZIP）
-fn process_compressed(
-    input_path: &Path,
-    output_dir: &str,
-    include_set: &RegexSet,
-    exclude_set: &RegexSet,
-    password_mode: PasswordMode,
-    display_password: bool,
-    compression_level: &str,
-    layer: &str,
-    encryption_method: &str,
-    no_progress: bool,
-    max_size: Option<f64>,
-    preset_password: Option<String>,
-) -> io::Result<()> {
-    fs::create_dir_all(output_dir)?;
-    let options: FileOptions<()> = if compression_level == "stored" {
-        FileOptions::default().compression_method(CompressionMethod::Stored)
-    } else {
-        FileOptions::default().compression_method(CompressionMethod::Deflated)
-    };
-
-    let mut files = Vec::new();
-    collect_files(input_path, &mut files, include_set, exclude_set, max_size)?;
-    if files.is_empty() {
-        error!("無有效檔案可壓縮");
-        return Err(io::Error::new(io::ErrorKind::Other, "無有效檔案可壓縮"));
-    }
-
-    let total_files = files.len();
-    let mut total_size = 0;
-    info!("開始壓縮 {} 個檔案（內層 ZIP）", total_files);
-
-    let pb = if no_progress {
-        ProgressBar::hidden()
-    } else {
-        let pb = ProgressBar::new(total_files as u64);
-        pb.set_style(ProgressStyle::default_bar().template("{msg} [{bar:40}] {pos}/{len}").unwrap());
-        pb
-    };
-
-    // 生成內層 ZIP
-    let inner_zip_buffer = create_inner_zip(input_path, &files, options, &pb)?;
-    for file_path in &files {
-        let mut file = File::open(file_path)?;
-        let mut buffer = Vec::new();
-        file.read_to_end(&mut buffer)?;
-        total_size += buffer.len();
-    }
-    pb.finish_with_message("內層 ZIP 壓縮完成");
-    info!("內層 ZIP 壓縮完成，共處理 {} 個檔案，總大小：{} 位元組", total_files, total_size);
-
-    // 生成密碼
-    let password = get_password(password_mode, preset_password)?;
-
-    // 選擇加密方法
-    let aes_mode = match encryption_method {
-        "aes128" => AesMode::Aes128,
-        "aes192" => AesMode::Aes192,
-        "aes256" => AesMode::Aes256,
-        _ => AesMode::Aes256, // 預設值
-    };
-
-    // 創建最終 ZIP（單層或雙層）
-    let file_name = input_path.file_name().unwrap_or(std::ffi::OsStr::new("archive")).to_string_lossy().to_string();
-    let final_zip_buffer = if layer == "double" {
-        // 雙層壓縮：將內層 ZIP 包裝到外層 ZIP
-        create_outer_zip(&inner_zip_buffer, &file_name, password.as_deref(), aes_mode)?
-    } else {
-        // 單層壓縮：直接使用內層 ZIP，並應用密碼（若有）
-        let mut zip_buffer = Vec::new();
-        if let Some(ref pwd) = password {
-            let mut zip = ZipWriter::new(std::io::Cursor::new(&mut zip_buffer));
-            let options: FileOptions<zip::write::ExtendedFileOptions> = FileOptions::default()
-                .compression_method(CompressionMethod::Deflated)
-                .with_aes_encryption(aes_mode, pwd);
-            zip.start_file(format!("{}.zip", file_name), options)?;
-            zip.write_all(&inner_zip_buffer)?;
-            zip.finish()?;
-            info!("生成單層加密 ZIP，密碼：{}，大小：{} 位元組", pwd, zip_buffer.len());
-        } else {
-            // 無密碼時直接使用內層 ZIP
-            zip_buffer = inner_zip_buffer;
-            info!("使用單層無密碼 ZIP，大小：{} 位元組", zip_buffer.len());
-        }
-        zip_buffer
-    };
-
-    // 將最終 ZIP 轉為 Base64
-    let zip_base64 = general_purpose::STANDARD.encode(&final_zip_buffer);
-    info!("生成最終 ZIP 的 Base64，總大小：{} 位元組", zip_base64.len());
-
-    // 檢查 Base64 資料大小（建議 <1MB）
-    const MAX_BASE64_SIZE: usize = 1_000_000; // 約 1MB
-    if zip_base64.len() > MAX_BASE64_SIZE {
-        warn!(
-            "Base64 資料過大：{} 位元組，超過建議限制 {} 位元組，可能影響顯示或下載：{}",
-            zip_base64.len(), MAX_BASE64_SIZE, input_path.display()
-        );
-    }
-
-    // 格式化檔案大小
-    let file_size_str = format_file_size(total_size);
-
-    // 處理密碼顯示和解壓說明
-    let (password_info, password_display, instructions) = get_instructions_and_password_display(
-        layer,
-        password.as_deref(),
-        display_password,
-        &file_name,
-        output_dir,
-    )?;
-
-    // 生成 HTML 內容
-    let html_content = generate_html_content(
-        &zip_base64,
-        &file_name,
-        &format!("{}_outer.zip", file_name),
-        &instructions,
-        &file_size_str,
-        &password_info,
-        &password_display,
-    );
-
-    // 寫入 HTML 文件
-    let output_path = Path::new(output_dir).join(format!("{}.html", file_name));
-    fs::write(&output_path, &html_content)?;
-    info!("生成 HTML 文件：{}，大小：{} 位元組", output_path.display(), html_content.len());
     Ok(())
 }
