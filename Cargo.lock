@@ -389,7 +389,6 @@ dependencies = [
  "clap",
  "dialoguer",
  "env_logger",
- "flate2",
  "indicatif",
  "log",
  "pathdiff",
