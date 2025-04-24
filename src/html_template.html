@@ -1,0 +1,142 @@
+<script type="text/javascript">
+        var gk_isXlsx = false;
+        var gk_xlsxFileLookup = {};
+        var gk_fileData = {};
+        function filledCell(cell) {
+          return cell !== '' && cell != null;
+        }
+        function loadFileData(filename) {
+        if (gk_isXlsx && gk_xlsxFileLookup[filename]) {
+            try {
+                var workbook = XLSX.read(gk_fileData[filename], { type: 'base64' });
+                var firstSheetName = workbook.SheetNames[0];
+                var worksheet = workbook.Sheets[firstSheetName];
+
+                // Convert sheet to JSON to filter blank rows
+                var jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, blankrows: false, defval: '' });
+                // Filter out blank rows (rows where all cells are empty, null, or undefined)
+                var filteredData = jsonData.filter(row => row.some(filledCell));
+
+                // Heuristic to find the header row by ignoring rows with fewer filled cells than the next row
+                var headerRowIndex = filteredData.findIndex((row, index) =>
+                  row.filter(filledCell).length >= filteredData[index + 1]?.filter(filledCell).length
+                );
+                // Fallback
+                if (headerRowIndex === -1 || headerRowIndex > 25) {
+                  headerRowIndex = 0;
+                }
+
+                // Convert filtered JSON back to CSV
+                var csv = XLSX.utils.aoa_to_sheet(filteredData.slice(headerRowIndex)); // Create a new sheet from filtered array of arrays
+                csv = XLSX.utils.sheet_to_csv(csv, { header: 1 });
+                return csv;
+            } catch (e) {
+                console.error(e);
+                return "";
+            }
+        }
+        return gk_fileData[filename] || "";
+        }
+        </script><!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>檔案下載</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            text-align: center;
+            background-color: #f4f7fa;
+            padding: 40px;
+            margin: 0;
+            color: #333;
+        }
+        h1 {
+            font-size: 28px;
+            color: #2c3e50;
+            margin-bottom: 20px;
+        }
+        p {
+            font-size: 16px;
+            color: #5a6a7a;
+            margin: 10px 0;
+        }
+        .password-display {
+            display: inline-block;
+            background-color: #e9ecef;
+            padding: 8px 12px;
+            border-radius: 5px;
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 16px;
+            color: #2c3e50;
+            margin: 10px 0;
+        }
+        .base64-data {
+            background-color: #e9ecef;
+            padding: 15px;
+            border-radius: 5px;
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 14px;
+            max-height: 300px;
+            overflow-x: auto;
+            overflow-y: auto;
+            text-align: left;
+            white-space: pre-wrap;
+            word-break: break-all;
+            margin: 20px auto;
+            max-width: 90%;
+        }
+        a {
+            display: inline-block;
+            padding: 12px 24px;
+            background-color: #007bff;
+            color: white;
+            text-decoration: none;
+            border-radius: 5px;
+            font-size: 16px;
+            margin: 20px 0;
+            transition: background-color 0.3s;
+        }
+        a:hover {
+            background-color: #0056b3;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+        }
+        @media (max-width: 600px) {
+            .container {
+                padding: 20px;
+                max-width: 95%;
+            }
+            h1 {
+                font-size: 24px;
+            }
+            p, a {
+                font-size: 14px;
+            }
+            .base64-data {
+                font-size: 12px;
+                padding: 10px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>檔案下載</h1>
+        <p>檔案名稱：{{FILE_NAME}}</p>
+        <p>檔案大小：{{FILE_SIZE}}</p>
+        {{INSTRUCTIONS}}
+        {{PASSWORD_DISPLAY}}
+        <a href="data:application/zip;base64,{{ZIP_BASE64}}" download="{{DOWNLOAD_ZIP_NAME}}">下載 ZIP 檔案</a>
+        <p>或複製下方 Base64 資料並手動解碼為 ZIP 檔案：</p>
+        <pre class="base64-data">{{ZIP_BASE64}}</pre>
+    </div>
+</body>
+</html>
