@@ -1,10 +1,10 @@
 use std::fs;
-use std::io;
+use std::io::{self, BufWriter, Write};
 use std::path::Path;
-use base64::{engine::general_purpose, Engine as _};
+use base64::{engine::general_purpose, write::EncoderWriter};
 use log::{info, warn};
 
-const HTML_TEMPLATE: &str = include_str!("html_template.html");
+const HTML_TEMPLATE: &str = include_str!("../assets/template/html_template.html");
 
 pub fn generate_html_content(
     zip_base64: &str,
@@ -46,7 +46,10 @@ pub fn handle_password_display(
             Ok(("下方密碼".to_string(), format!("<p>密碼：<span class=\"password-display\">{}</span></p>", pwd)))
         } else {
             let key_file = format!("{}.html.key", file_name);
-            fs::write(Path::new(output_dir).join(&key_file), pwd)?;
+            let path = Path::new(output_dir).join(&key_file);
+            let mut file = BufWriter::new(fs::File::create(&path)?);
+            file.write_all(pwd.as_bytes())?;
+            file.flush()?;
             info!("密碼已儲存至：{}", key_file);
             Ok((format!("{}.html.key 檔案", file_name), "".to_string()))
         }
@@ -56,7 +59,14 @@ pub fn handle_password_display(
 }
 
 pub fn encode_to_base64(data: &[u8], file_path: &Path) -> io::Result<String> {
-    let zip_base64 = general_purpose::STANDARD.encode(data);
+    let mut base64_buffer = Vec::new();
+    {
+        let mut encoder = EncoderWriter::new(&mut base64_buffer, &general_purpose::STANDARD);
+        encoder.write_all(data)?;
+        encoder.flush()?;
+    }
+    let zip_base64 = String::from_utf8(base64_buffer)
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
     const MAX_BASE64_SIZE: usize = 1_000_000;
     if zip_base64.len() > MAX_BASE64_SIZE {
         warn!(
@@ -69,6 +79,9 @@ pub fn encode_to_base64(data: &[u8], file_path: &Path) -> io::Result<String> {
 
 pub fn write_html_file(html_content: &str, output_dir: &str, file_name: &str) -> io::Result<()> {
     let output_path = Path::new(output_dir).join(format!("{}.html", file_name));
-    fs::write(&output_path, html_content)?;
+    let file = fs::File::create(&output_path)?;
+    let mut writer = BufWriter::new(file);
+    writer.write_all(html_content.as_bytes())?;
+    writer.flush()?;
     Ok(())
 }

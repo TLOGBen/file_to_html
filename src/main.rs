@@ -1,9 +1,11 @@
 mod cli;
-mod file;
-mod zip;
-mod html;
+mod config;
 mod convert;
+mod file;
+mod html;
+mod interactive;
 mod utils;
+mod zip;
 
 use std::io;
 
