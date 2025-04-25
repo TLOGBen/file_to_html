@@ -1,10 +1,11 @@
-use std::io::{self, Read, Write};
+use std::io::{self, Write};
 use regex::RegexSet;
 use rand::{Rng};
 use chrono::Local;
 use indicatif::{ProgressBar, ProgressStyle};
 use log;
 use std::time::Instant;
+use std::sync::{Arc, Mutex};
 use crate::config::PasswordMode;
 use std::path::Path;
 use std::fs::File;
@@ -24,9 +25,11 @@ pub fn setup_logging(log_level: &str) -> io::Result<()> {
 }
 
 pub struct ProgressManager {
-    pb: ProgressBar,
+    pb: Arc<Mutex<ProgressBar>>,
     no_progress: bool,
     start: Instant,
+    last_update: Instant,
+    update_interval: f64,
 }
 
 impl ProgressManager {
@@ -52,9 +55,11 @@ impl ProgressManager {
             pb
         };
         ProgressManager {
-            pb,
+            pb: Arc::new(Mutex::new(pb)),
             no_progress,
             start: Instant::now(),
+            last_update: Instant::now(),
+            update_interval: 1.0,
         }
     }
 
@@ -62,20 +67,28 @@ impl ProgressManager {
         if self.no_progress {
             return;
         }
-        let elapsed = self.start.elapsed().as_secs_f64();
-        let speed = if elapsed > 0.0 { count as f64 / elapsed } else { 0.0 };
-        let msg = match total_size {
-            Some(size) => format!(
-                "{}：{} 檔案，{:.2} MB，速度：{:.0} 檔案/秒",
-                action, count, size as f64 / 1_048_576.0, speed
-            ),
-            None => format!(
-                "{}：{} 檔案，速度：{:.0} 檔案/秒",
-                action, count, speed
-            ),
-        };
-        self.pb.set_message(msg);
-        self.pb.set_position(count);
+        let now = Instant::now();
+        if now.duration_since(self.last_update).as_secs_f64() >= self.update_interval {
+            let elapsed = self.start.elapsed().as_secs_f64();
+            let speed = if elapsed > 0.0 { count as f64 / elapsed } else { 0.0 };
+            let msg = match total_size {
+                Some(size) => format!(
+                    "{}：{} 檔案，{:.2} MB，速度：{:.0} 檔案/秒",
+                    action, count, size as f64 / 1_048_576.0, speed
+                ),
+                None => format!(
+                    "{}：{} 檔案，速度：{:.0} 檔案/秒",
+                    action, count, speed
+                ),
+            };
+            let pb = self.pb.lock().unwrap();
+            pb.set_message(msg);
+            pb.set_position(count);
+            drop(pb);
+            // 由於 last_update 僅在單執行緒中使用，無需同步
+            let mut last_update = self.last_update;
+            last_update = now;
+        }
     }
 
     pub fn finish(&self, file_count: u64, total_size: Option<usize>, skipped_dirs: u64) {
@@ -95,7 +108,9 @@ impl ProgressManager {
                 skipped_dirs
             ),
         };
-        self.pb.finish_with_message(msg);
+        let pb = self.pb.lock().unwrap();
+        pb.finish_with_message(msg);
+        drop(pb);
     }
 }
 

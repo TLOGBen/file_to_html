@@ -33,34 +33,37 @@
             color: #2c3e50;
             margin: 10px 0;
         }
-        .base64-data {
-            background-color: #e9ecef;
-            padding: 15px;
-            border-radius: 5px;
-            font-family: 'Courier New', Courier, monospace;
-            font-size: 14px;
-            max-height: 300px;
-            overflow-x: auto;
-            overflow-y: auto;
-            text-align: left;
-            white-space: pre-wrap;
-            word-break: break-all;
-            margin: 20px auto;
-            max-width: 90%;
-        }
-        a {
+        button {
             display: inline-block;
             padding: 12px 24px;
             background-color: #007bff;
             color: white;
-            text-decoration: none;
+            border: none;
             border-radius: 5px;
             font-size: 16px;
             margin: 20px 0;
+            cursor: pointer;
             transition: background-color 0.3s;
         }
-        a:hover {
+        button:hover {
             background-color: #0056b3;
+        }
+        .loading {
+            display: none;
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #007bff;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: translate(-50%, -50%) rotate(0deg); }
+            100% { transform: translate(-50%, -50%) rotate(360deg); }
         }
         .container {
             max-width: 800px;
@@ -78,26 +81,47 @@
             h1 {
                 font-size: 24px;
             }
-            p, a {
+            p, button {
                 font-size: 14px;
-            }
-            .base64-data {
-                font-size: 12px;
-                padding: 10px;
             }
         }
     </style>
 </head>
 <body>
-    <div class="container">
-        <h1>檔案下載</h1>
-        <p>檔案名稱：{{FILE_NAME}}</p>
-        <p>檔案大小：{{FILE_SIZE}}</p>
-        {{INSTRUCTIONS}}
-        {{PASSWORD_DISPLAY}}
-        <a href="data:application/zip;base64,{{ZIP_BASE64}}" download="{{DOWNLOAD_ZIP_NAME}}">下載 ZIP 檔案</a>
-        <p>或複製下方 Base64 資料並手動解碼為 ZIP 檔案：</p>
-        <pre class="base64-data">{{ZIP_BASE64}}</pre>
-    </div>
+<div class="container">
+    <h1>檔案下載</h1>
+    <p>檔案名稱：{{FILE_NAME}}</p>
+    <p>檔案大小：{{FILE_SIZE}}</p>
+    {{INSTRUCTIONS}}
+    {{PASSWORD_DISPLAY}}
+    <button onclick="downloadFile('{{ZIP_BASE64}}', '{{DOWNLOAD_ZIP_NAME}}')">下載 ZIP 檔案</button>
+    <div id="loading" class="loading"></div>
+</div>
+<script>
+    function downloadFile(base64Data, fileName) {
+        document.getElementById('loading').style.display = 'block';
+        setTimeout(() => {
+            try {
+                const binary = atob(base64Data);
+                const array = new Uint8Array(binary.length);
+                for (let i = 0; i < binary.length; i++) {
+                    array[i] = binary.charCodeAt(i);
+                }
+                const blob = new Blob([array], { type: 'application/zip' });
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement('a');
+                link.href = url;
+                link.download = fileName;
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+                URL.revokeObjectURL(url);
+            } catch (e) {
+                alert('下載失敗，請檢查 Base64 數據或瀏覽器支援：' + e.message);
+            }
+            document.getElementById('loading').style.display = 'none';
+        }, 100);
+    }
+</script>
 </body>
 </html>

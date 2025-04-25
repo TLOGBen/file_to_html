@@ -15,7 +15,6 @@ rand = "0.9.1"
 regex = "1.10"
 zip = { version = "2.2", features = ["aes-crypto"] }
 chrono = "0.4"
-walkdir = "2.5.0"
 rayon = "1.10.0"
 jwalk = "0.8"
 tokio = { version = "1", features = ["fs", "rt", "rt-multi-thread", "io-util"] }

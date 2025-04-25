@@ -51,12 +51,11 @@ fn filter_entry(
     }
 }
 
-// 檔案蒐集器結構體，封裝蒐集邏輯
+// 檔案蒐集器結構體，移除 pm 字段
 pub struct FileCollector {
     include_set: RegexSet,
     exclude_set: RegexSet,
     max_size: Option<f64>,
-    pm: crate::utils::ProgressManager,
     no_progress: bool,
 }
 
@@ -67,19 +66,18 @@ impl FileCollector {
         max_size: Option<f64>,
         no_progress: bool,
     ) -> Self {
-        let pm = crate::utils::create_progress_bar(0, no_progress);
         FileCollector {
             include_set,
             exclude_set,
             max_size,
-            pm,
             no_progress,
         }
     }
 
     pub fn collect_files(&self, input_path: &Path) -> io::Result<Vec<PathBuf>> {
         let mut files = Vec::new();
-        self.collect_and_measure_files(input_path, &mut files, false)?;
+        let pm = crate::utils::create_progress_bar(0, self.no_progress);
+        self.collect_and_measure_files(input_path, &mut files, false, &pm)?;
         Ok(files)
     }
 
@@ -88,6 +86,7 @@ impl FileCollector {
         input_path: &Path,
         files: &mut Vec<PathBuf>,
         measure_size: bool,
+        pm: &crate::utils::ProgressManager,
     ) -> io::Result<usize> {
         let mut total_size = 0;
         let mut skipped_dirs = 0;
@@ -96,7 +95,7 @@ impl FileCollector {
         // 使用 jwalk 進行平行遍歷
         let entries: Vec<_> = WalkDir::new(input_path)
             .skip_hidden(false)
-            .parallelism(jwalk::Parallelism::RayonNewPool(4)) // 限制 4 個線程
+            .parallelism(jwalk::Parallelism::RayonNewPool(4))
             .into_iter()
             .filter(|e| e.as_ref().map_or(true, |e| filter_entry(e, &self.exclude_set, &mut skipped_dirs)))
             .filter_map(|e| e.ok())
@@ -132,7 +131,7 @@ impl FileCollector {
                 files.push(path);
                 total_size += size;
                 if !self.no_progress && files.len() % 1000 == 0 {
-                    self.pm.update(
+                    pm.update(
                         files.len() as u64,
                         if measure_size { Some(total_size) } else { None },
                         "蒐集檔案",
@@ -142,7 +141,7 @@ impl FileCollector {
         }
 
         if !self.no_progress && files.len() % 1000 != 0 {
-            self.pm.update(
+            pm.update(
                 files.len() as u64,
                 if measure_size { Some(total_size) } else { None },
                 "蒐集檔案",
@@ -150,11 +149,11 @@ impl FileCollector {
         }
 
         if files.is_empty() {
-            self.pm.finish(0, None, skipped_dirs);
+            pm.finish(0, None, skipped_dirs);
             return Err(io::Error::new(io::ErrorKind::Other, "無有效檔案可壓縮"));
         }
 
-        self.pm.finish(files.len() as u64, if measure_size { Some(total_size) } else { None }, skipped_dirs);
+        pm.finish(files.len() as u64, if measure_size { Some(total_size) } else { None }, skipped_dirs);
         info!(
             "蒐集檔案完成，共 {} 個檔案，總大小：{} 位元組，跳過 {} 個目錄",
             files.len(),
@@ -180,7 +179,8 @@ pub fn collect_files(
         max_size,
         no_progress,
     );
-    collector.collect_files(path)?;
+    let pm = crate::utils::create_progress_bar(0, no_progress);
+    collector.collect_and_measure_files(path, files, false, &pm)?;
     Ok(())
 }
 
@@ -198,7 +198,8 @@ pub fn collect_and_measure_files(
         max_size,
         no_progress,
     );
+    let pm = crate::utils::create_progress_bar(0, no_progress);
     let mut files = Vec::new();
-    let total_size = collector.collect_and_measure_files(input_path, &mut files, true)?;
+    let total_size = collector.collect_and_measure_files(input_path, &mut files, true, &pm)?;
     Ok((files, total_size))
 }

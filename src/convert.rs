@@ -103,7 +103,7 @@ fn compress_single_file(
         }
     } else {
         let inner_data = if compress && layer != "none" {
-            let zip_buffer = compress_file_content(data, file_name, compression_level, password, aes_mode)?;
+            let zip_buffer = compress_file_content(data, file_name, password, aes_mode)?;
             info!("壓縮檔案至內層 ZIP：{}，壓縮後大小：{} 位元組", file_name, zip_buffer.len());
             if let Some(pwd) = password {
                 info!("內層 ZIP 使用密碼：{}", pwd);

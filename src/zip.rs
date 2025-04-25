@@ -1,11 +1,11 @@
-use std::io::{self, Seek, Write};
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use zip::write::{SimpleFileOptions, ZipWriter};
 use zip::CompressionMethod;
 use zip::AesMode;
 use log::info;
 use pathdiff::diff_paths;
-use rayon::prelude::*;
 use tokio::fs::File;
 use tokio::io::AsyncReadExt;
 
@@ -14,62 +14,35 @@ pub trait Compressor {
     fn compress_files(&mut self, files: &[PathBuf], input_path: &Path) -> io::Result<Vec<u8>>;
 }
 
-// ZIP 壓縮器結構體
 pub struct ZipCompressor {
     options: SimpleFileOptions,
     password: Option<String>,
     aes_mode: AesMode,
-    pm: crate::utils::ProgressManager,
+    pm: Arc<crate::utils::ProgressManager>,
     no_progress: bool,
 }
 
 impl ZipCompressor {
-    pub fn new(
-        options: SimpleFileOptions,
-        password: Option<&str>,
-        aes_mode: AesMode,
-        no_progress: bool,
-    ) -> Self {
-        let pm = crate::utils::create_progress_bar(0, no_progress);
-        ZipCompressor {
-            options,
-            password: password.map(String::from),
-            aes_mode,
-            pm,
-            no_progress,
-        }
+    pub fn new(options: SimpleFileOptions, password: Option<&str>, aes_mode: AesMode, no_progress: bool) -> Self {
+        let pm = Arc::new(crate::utils::create_progress_bar(0, no_progress));
+        ZipCompressor { options, password: password.map(String::from), aes_mode, pm, no_progress }
     }
 }
 
 impl Compressor for ZipCompressor {
     fn compress_files(&mut self, files: &[PathBuf], input_path: &Path) -> io::Result<Vec<u8>> {
         let total_files = files.len() as u64;
-        self.pm = crate::utils::create_progress_bar(total_files, self.no_progress);
-        let start = std::time::Instant::now();
-
-        // 收集檔案路徑和相對路徑
-        let file_entries: Vec<_> = files
-            .iter()
-            .filter_map(|file_path| {
-                let relative_path = diff_paths(file_path, input_path.parent().unwrap_or(input_path))?;
-                let relative_path_str = relative_path
-                    .to_string_lossy()
-                    .replace("\\", "/")
-                    .trim_start_matches("./")
-                    .to_string();
-                Some((file_path.clone(), relative_path_str))
-            })
-            .collect();
-
-        // 初始化 ZIP
+        self.pm = Arc::new(crate::utils::create_progress_bar(total_files, self.no_progress));
         let mut zip_buffer = Vec::new();
         let mut zip = ZipWriter::new(std::io::Cursor::new(&mut zip_buffer));
         let mut total_size = 0;
         let mut processed_files = 0;
 
-        // 非同步讀取並寫入
         let rt = tokio::runtime::Runtime::new()?;
-        for (file_path, relative_path) in file_entries {
+        for (file_path, relative_path) in files.iter().filter_map(|file_path| {
+            diff_paths(file_path, input_path.parent().unwrap_or(input_path))
+                .map(|rp| (file_path.clone(), rp.to_string_lossy().replace("\\", "/").trim_start_matches("./").to_string()))
+        }) {
             let mut file = rt.block_on(File::open(&file_path))?;
             let mut data = Vec::new();
             rt.block_on(file.read_to_end(&mut data))?;
@@ -82,39 +55,27 @@ impl Compressor for ZipCompressor {
             } else {
                 zip.start_file(&relative_path, self.options)?;
             }
-
             zip.write_all(&data)?;
             total_size += data.len();
             processed_files += 1;
 
-            // 調整為每 5000 個檔案更新一次進度條
-            if !self.no_progress && processed_files % 5000 == 0 {
+            // 每 100 個檔案更新進度條
+            if !self.no_progress{
                 self.pm.update(processed_files as u64, Some(total_size), "壓縮檔案");
             }
         }
 
-        // 最後一次更新
-        if !self.no_progress && processed_files % 5000 != 0 {
+        if !self.no_progress {
             self.pm.update(processed_files as u64, Some(total_size), "壓縮檔案");
         }
-
         self.pm.finish(processed_files as u64, Some(total_size), 0);
         info!("內層 ZIP 壓縮完成，大小：{} 位元組", total_size);
-
         zip.finish()?;
         Ok(zip_buffer)
     }
 }
 
-// 更新 create_inner_zip
-pub fn create_inner_zip(
-    input_path: &Path,
-    files: &[PathBuf],
-    options: SimpleFileOptions,
-    password: Option<&str>,
-    aes_mode: AesMode,
-    no_progress: bool,
-) -> io::Result<Vec<u8>> {
+pub fn create_inner_zip(input_path: &Path, files: &[PathBuf], options: SimpleFileOptions, password: Option<&str>, aes_mode: AesMode, no_progress: bool) -> io::Result<Vec<u8>> {
     let mut compressor = ZipCompressor::new(options, password, aes_mode, no_progress);
     compressor.compress_files(files, input_path)
 }
@@ -132,7 +93,6 @@ pub fn create_zip_buffer(file_name: &str, data: &[u8], options: SimpleFileOption
 pub fn compress_file_content(
     data: &[u8],
     file_name: &str,
-    compression_level: &str,
     password: Option<&str>,
     aes_mode: AesMode,
 ) -> io::Result<Vec<u8>> {
