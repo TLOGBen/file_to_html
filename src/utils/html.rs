@@ -4,7 +4,7 @@ use std::path::Path;
 use base64::{engine::general_purpose, write::EncoderWriter};
 use log::{info, warn};
 
-const HTML_TEMPLATE: &str = include_str!("../assets/template/html_template.html");
+const HTML_TEMPLATE: &str = include_str!("../../assets/template/html_template.html");
 
 pub fn generate_html_content(
     zip_base64: &str,

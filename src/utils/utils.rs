@@ -6,7 +6,7 @@ use indicatif::{ProgressBar, ProgressStyle};
 use log;
 use std::time::Instant;
 use std::sync::{Arc, Mutex};
-use crate::config::PasswordMode;
+use crate::config::config::PasswordMode;
 use std::path::Path;
 use std::fs::File;
 use rand::distr::Alphanumeric;
@@ -86,8 +86,7 @@ impl ProgressManager {
             pb.set_position(count);
             drop(pb);
             // 由於 last_update 僅在單執行緒中使用，無需同步
-            let mut last_update = self.last_update;
-            last_update = now;
+            self.last_update;
         }
     }
 
@@ -130,19 +129,6 @@ pub fn manage_progress(
         return;
     }
     pm.update(count, total_size, action);
-}
-
-pub fn finalize_progress(
-    pm: &ProgressManager,
-    file_count: u64,
-    total_size: Option<usize>,
-    skipped_dirs: u64,
-    no_progress: bool,
-) {
-    if no_progress {
-        return;
-    }
-    pm.finish(file_count, total_size, skipped_dirs);
 }
 
 pub fn get_file_name(path: &Path, layer: &str) -> (String, String) {

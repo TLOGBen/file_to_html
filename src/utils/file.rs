@@ -9,7 +9,7 @@ use rayon::prelude::*;
 // 讀取檔案內容，保持串流讀寫
 pub fn read_file_content(file_path: &Path) -> io::Result<(Vec<u8>, usize)> {
     let mut buffer = Vec::new();
-    let file_size = crate::utils::copy_file_content(file_path, &mut buffer)?;
+    let file_size = crate::utils::utils::copy_file_content(file_path, &mut buffer)?;
     Ok((buffer, file_size))
 }
 
@@ -74,23 +74,16 @@ impl FileCollector {
         }
     }
 
-    pub fn collect_files(&self, input_path: &Path) -> io::Result<Vec<PathBuf>> {
-        let mut files = Vec::new();
-        let pm = crate::utils::create_progress_bar(0, self.no_progress);
-        self.collect_and_measure_files(input_path, &mut files, false, &pm)?;
-        Ok(files)
-    }
-
     pub fn collect_and_measure_files(
         &self,
         input_path: &Path,
         files: &mut Vec<PathBuf>,
         measure_size: bool,
-        pm: &crate::utils::ProgressManager,
+        pm: &crate::utils::utils::ProgressManager,
     ) -> io::Result<usize> {
         let mut total_size = 0;
         let mut skipped_dirs = 0;
-        let start = std::time::Instant::now();
+        let _ = std::time::Instant::now();
 
         // 使用 jwalk 進行平行遍歷
         let entries: Vec<_> = WalkDir::new(input_path)
@@ -179,7 +172,7 @@ pub fn collect_files(
         max_size,
         no_progress,
     );
-    let pm = crate::utils::create_progress_bar(0, no_progress);
+    let pm = crate::utils::utils::create_progress_bar(0, no_progress);
     collector.collect_and_measure_files(path, files, false, &pm)?;
     Ok(())
 }
@@ -198,7 +191,7 @@ pub fn collect_and_measure_files(
         max_size,
         no_progress,
     );
-    let pm = crate::utils::create_progress_bar(0, no_progress);
+    let pm = crate::utils::utils::create_progress_bar(0, no_progress);
     let mut files = Vec::new();
     let total_size = collector.collect_and_measure_files(input_path, &mut files, true, &pm)?;
     Ok((files, total_size))

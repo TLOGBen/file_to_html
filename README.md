@@ -10,6 +10,8 @@
 - **檔案篩選**：使用通配符進行檔案選擇與排除
 - **進度顯示**：包含進度條和日誌輸出，方便監控處理過程
 - **跨平台**：在Windows、macOS和Linux環境中運行
+- **預設配置**：提供快速操作的預設配置，僅需指定輸入和輸出路徑
+- **互動模式**：不提供命令列參數時自動啟動互動式配置界面
 
 ## 版本資訊
 
@@ -70,9 +72,18 @@ rand = "0.8"            # 亂數生成
 regex = "1.10"          # 正則表達式
 zip = "2.2"             # ZIP壓縮/解壓
 chrono = "0.4"          # 時間戳處理
+tokio = "1.35"          # 非同步運行時
 ```
 
 ## 使用指南
+
+### 快速開始
+
+最簡單的使用方式是啟用預設配置：
+```bash
+file_to_html <輸入路徑> -o <輸出目錄>
+```
+這將使用預設設定（個別模式、雙層壓縮、隨機密碼等）進行處理。
 
 ### 命令列模式
 
@@ -98,6 +109,8 @@ file_to_html <輸入路徑> [選項參數]
 | `--max-size <MB>` | 處理檔案大小上限（MB） | 無限制 |
 | `--log-level <級別>` | 日誌級別：`info`、`warn`或`error` | `info` |
 | `--no-progress` | 不顯示進度條 | `false` |
+| `--use-default-config` | 使用預設配置（僅需指定輸入和輸出） | `true` |
+| `--show-config` | 顯示實際使用的配置 | `false` |
 
 #### 實用範例
 
@@ -119,6 +132,18 @@ file_to_html ./documents --include "*.docx,*.xlsx,*.pptx" --exclude "*.tmp,*_old
 ```
 - 結果：僅處理Office文件，排除暫存和舊版檔案
 
+**範例4：預設配置（簡化指令）**
+```bash
+file_to_html ./mydata --use-default-config --show-config
+```
+- 結果：使用預設設定處理目錄，並顯示實際使用的配置
+
+**範例5：明確自訂配置（不使用預設值）**
+```bash
+file_to_html ./mydata --use-default-config=false --mode compressed --layer single
+```
+- 結果：使用壓縮模式和單層ZIP，忽略預設配置
+
 ### 互動模式使用
 
 不提供命令列參數時，程式會啟動互動模式，引導完成設定：
@@ -128,7 +153,10 @@ file_to_html ./documents --include "*.docx,*.xlsx,*.pptx" --exclude "*.tmp,*_old
    file_to_html
    ```
 
-2. **逐步設定**：
+2. **選擇預設配置**：
+   首先決定是否使用預設配置，這會跳過大部分設定步驟
+
+3. **逐步設定**（如不使用預設配置）：
    - 指定輸入路徑
    - 選擇轉換模式（個別/壓縮）
    - 設定ZIP層數
@@ -138,18 +166,29 @@ file_to_html ./documents --include "*.docx,*.xlsx,*.pptx" --exclude "*.tmp,*_old
 互動操作範例：
 ```
 === 歡迎使用互動模式 ===
-請輸入檔案或目錄路徑：./project_docs
-選擇轉換模式：壓縮 - 壓縮成單個ZIP嵌入HTML
-選擇ZIP層數：雙層 - 生成外層和內層ZIP
-選擇密碼模式：隨機生成（16位）
-是否在HTML中顯示密碼？是
-輸入輸出目錄：secure_output
-輸入包含模式：*.pdf,*.docx
-輸入排除模式：*draft*,*temp*
+是否使用預設配置？（壓縮模式、單層壓縮、隨機密碼等，僅需指定輸入和輸出路徑） [Y/n]: n
+請輸入檔案或目錄路徑（例如：./myfile.txt 或 ./mydir）: ./project_docs
+選擇轉換模式（使用方向鍵選擇，按 Enter 確認）:
+> 個別 - 為每個檔案生成單獨的 HTML
+  壓縮 - 壓縮成單個 ZIP 嵌入 HTML
+選擇 ZIP 層數（使用方向鍵選擇，按 Enter 確認）:
+  不壓縮
+> 單層 - 僅生成一層 ZIP
+  雙層 - 生成外層和內層 ZIP（預設）
+選擇密碼模式（使用方向鍵選擇，按 Enter 確認）:
+> 隨機生成（16 位，預設）
+  手動輸入
+  時間戳（yyyyMMddhhmmss）
+  無密碼
+是否在 HTML 中顯示隨機生成的密碼？（預設為是） [Y/n]: y
+輸入輸出目錄（例如：./output，預設為 output）: secure_output
+輸入包含模式（例如：.txt,.pdf，預設為 *）: *.pdf,*.docx
+輸入排除模式（例如：.jpg,.png，預設為空）: *draft*,*temp*
 ```
 
 ## 使用須知
 
+- **預設配置說明**：使用 `--use-default-config=true`（預設）時，工具使用個別模式、雙層壓縮和隨機密碼等固定配置
 - **密碼安全性**：隨機密碼適合日常使用，重要資料建議使用強密碼手動輸入
 - **檔案體積**：Base64編碼會增加約33%的檔案大小，超過10MB的檔案可能影響HTML載入速度
 - **解壓建議**：加密ZIP檔案建議使用7-Zip、WinRAR等專業解壓工具開啟
@@ -159,5 +198,6 @@ file_to_html ./documents --include "*.docx,*.xlsx,*.pptx" --exclude "*.tmp,*_old
 
 - 使用`--layer none`搭配`--mode individual`可生成無壓縮的純Base64嵌入HTML
 - 雙層加密適合重要資料，提供兩重密碼保護
-- 使用`--compression-level stored`可加快處理速度，但不減少檔案大小
+- 使用`--show-config`可在轉換完成後查看實際使用的配置
 - 批處理大量檔案時可使用`--no-progress`減少輸出資訊
+- 配置選項優先級：具體指定的參數 > 互動模式選擇 > 預設配置

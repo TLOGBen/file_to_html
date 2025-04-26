@@ -2,37 +2,42 @@ use dialoguer::{Input, Password, Select, Confirm};
 use std::io;
 use std::path::Path;
 
-use crate::config::{PasswordMode, validate_input_path};
-use crate::utils::{setup_logging, create_regex_sets, generate_password};
-use crate::convert::execute_conversion;
+use crate::config::config::{PasswordMode};
+use crate::utils::utils::setup_logging;
+use crate::config::ports::{AppConfig, ConfigPort, ConversionPort};
+use crate::service::config_service::{ConfigService, DefaultConfigAdapter};
+use crate::utils::convert::ConversionAdapter;
 
 pub fn process_interactive_mode() -> io::Result<String> {
     println!("=== 歡迎使用互動模式 ===");
+    let use_default_config = get_default_config_option()?;
     let input = get_input_path()?;
-    let (is_compressed, password_mode, display_password, layer, encryption_method) = get_conversion_mode_and_password()?;
     let output = get_output_path()?;
-    let (include, exclude) = get_file_patterns()?;
-    let (compress, compression_level) = get_compression_options(is_compressed)?;
-    let no_progress = get_no_progress_option()?;
-    let max_size = get_max_size_option()?;
-    let log_level = get_log_level_option()?;
 
-    setup_logging(&log_level)?;
-    execute_conversion(
-        &input,
-        &output,
-        is_compressed,
-        compress,
-        &include,
-        &exclude.unwrap_or_default(),
-        password_mode,
-        display_password,
-        &compression_level,
-        &layer,
-        &encryption_method,
-        no_progress,
-        max_size,
-    )
+    let config_port: Box<dyn ConfigPort> = if use_default_config {
+        println!("使用預設配置：壓縮模式，單層壓縮，隨機密碼，AES256 加密");
+        Box::new(DefaultConfigAdapter::new(input.clone(), output.clone()))
+    } else {
+        Box::new(InteractiveConfigAdapter::new(input, output))
+    };
+
+    let config_service = ConfigService::new(config_port);
+    let config = config_service.get_config()?;
+
+    // 顯示配置（模擬 --show-config）
+    println!("實際使用的配置：{:#?}", config);
+
+    let conversion_port: Box<dyn ConversionPort> = Box::new(ConversionAdapter);
+    let output = conversion_port.execute(config)?; // 傳遞借用
+    Ok(output)
+}
+
+pub fn get_default_config_option() -> io::Result<bool> {
+    Confirm::new()
+        .with_prompt("是否使用預設配置？（壓縮模式、單層壓縮、隨機密碼等，僅需指定輸入和輸出路徑）")
+        .default(true)
+        .interact()
+        .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("預設配置選擇失敗: {}", e)))
 }
 
 pub fn get_input_path() -> io::Result<String> {
@@ -41,6 +46,14 @@ pub fn get_input_path() -> io::Result<String> {
         .validate_with(|input: &String| -> Result<(), String> {
             if Path::new(input).exists() { Ok(()) } else { Err(format!("路徑 '{}' 不存在", input)) }
         })
+        .interact_text()
+        .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))
+}
+
+pub fn get_output_path() -> io::Result<String> {
+    Input::new()
+        .with_prompt("輸入輸出目錄（例如：./output，預設為 output）")
+        .default("output".to_string())
         .interact_text()
         .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))
 }
@@ -125,14 +138,6 @@ pub fn get_conversion_mode_and_password() -> io::Result<(bool, PasswordMode, boo
     Ok((is_compressed, password_mode, display_password, layer, encryption_method))
 }
 
-pub fn get_output_path() -> io::Result<String> {
-    Input::new()
-        .with_prompt("輸入輸出目錄（例如：./output，預設為 output）")
-        .default("output".to_string())
-        .interact_text()
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))
-}
-
 pub fn get_file_patterns() -> io::Result<(Vec<String>, Option<Vec<String>>)> {
     let include = Input::new()
         .with_prompt("輸入包含模式（例如：.txt,.pdf，預設為 *）")
@@ -157,7 +162,7 @@ pub fn get_file_patterns() -> io::Result<(Vec<String>, Option<Vec<String>>)> {
     Ok((include, if exclude.is_empty() { None } else { Some(exclude) }))
 }
 
-pub fn get_compression_options(is_compressed: bool) -> io::Result<(bool, String)> {
+pub fn get_compression_options(is_compressed: bool) -> io::Result<bool> {
     let compress = if !is_compressed {
         Confirm::new()
             .with_prompt("是否在個別模式下將檔案壓縮為 ZIP？")
@@ -167,7 +172,7 @@ pub fn get_compression_options(is_compressed: bool) -> io::Result<(bool, String)
     } else {
         true
     };
-    Ok((compress, "deflated".to_string()))
+    Ok(compress)
 }
 
 pub fn get_no_progress_option() -> io::Result<bool> {
@@ -195,4 +200,44 @@ pub fn prompt_manual_password() -> io::Result<String> {
         return Err(io::Error::new(io::ErrorKind::InvalidInput, "密碼不匹配"));
     }
     Ok(pwd)
+}
+
+// 交互配置適配器
+pub struct InteractiveConfigAdapter {
+    input: String,
+    output: String,
+}
+
+impl InteractiveConfigAdapter {
+    pub fn new(input: String, output: String) -> Self {
+        InteractiveConfigAdapter { input, output }
+    }
+}
+
+impl ConfigPort for InteractiveConfigAdapter {
+    fn get_config(&self) -> io::Result<AppConfig> {
+        let (is_compressed, password_mode, display_password, layer, encryption_method) = get_conversion_mode_and_password()?;
+        let (include, exclude) = get_file_patterns()?;
+        let compress = get_compression_options(is_compressed)?;
+        let no_progress = get_no_progress_option()?;
+        let max_size = get_max_size_option()?;
+        let log_level = get_log_level_option()?;
+
+        setup_logging(&log_level)?;
+
+        Ok(AppConfig {
+            input: self.input.clone(),
+            output: self.output.clone(),
+            is_compressed,
+            compress,
+            include,
+            exclude,
+            password_mode,
+            display_password,
+            layer,
+            encryption_method,
+            no_progress,
+            max_size,
+        })
+    }
 }

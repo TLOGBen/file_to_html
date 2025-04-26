@@ -1,15 +1,28 @@
-mod cli;
-mod config;
-mod convert;
-mod file;
-mod html;
-mod interactive;
-mod utils;
-mod zip;
+mod service {
+    pub(crate) mod config_service;
+}
+
+mod config {
+    pub(crate) mod config;
+    pub(crate) mod ports;
+}
+
+mod action {
+    pub(crate) mod cli;
+    pub(crate) mod interactive;
+}
+
+mod utils {
+    pub(crate) mod convert;
+    pub(crate) mod file;
+    pub(crate) mod html;
+    pub(crate) mod utils;
+    pub(crate) mod zip;
+}
 
 use std::io;
 
-use crate::cli::process_args;
+use crate::action::cli::process_args;
 
 fn main() -> io::Result<()> {
     let args: Vec<String> = std::env::args().collect();

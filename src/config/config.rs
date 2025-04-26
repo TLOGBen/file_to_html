@@ -2,11 +2,11 @@ use clap::{Parser, ValueEnum};
 use std::io;
 use std::path::Path;
 
-#[derive(Parser)]
+#[derive(Parser, Clone)] // 添加 Clone 派生
 #[command(
     name = "file_to_html",
     about = "將檔案或目錄轉換為嵌入式 HTML 格式",
-    long_about = "一個將檔案或目錄轉換為 HTML 格式的工具，支援單一檔案轉換或壓縮成單一 ZIP 檔案並嵌入 HTML，內嵌單層或雙層 ZIP（可選擇加密）。\n使用 `--help` 查看詳細用法。",
+    long_about = "一個將檔案或目錄轉換為 HTML 格式的工具，支援單一檔案轉換或壓縮成單一 ZIP 檔案並嵌入 HTML，內嵌單層或雙層 ZIP（可選擇加密）。\n預設使用 --use-default-config（壓縮模式、單層壓縮、隨機密碼等），僅需指定 input 和 output。指定 --use-default-config=false 以自訂參數。使用 --show-config 預覽實際配置。\n使用 `--help` 查看詳細用法。",
     arg_required_else_help = true
 )]
 pub struct Cli {
@@ -25,8 +25,6 @@ pub struct Cli {
     pub password_mode: String,
     #[arg(long)]
     pub display_password: Option<bool>,
-    #[arg(long, default_value = "deflated", value_parser = ["stored", "deflated"])]
-    pub compression_level: String,
     #[arg(long, default_value = "double", value_parser = ["none", "single", "double"])]
     pub layer: String,
     #[arg(long, default_value = "aes256", value_parser = ["aes128", "aes192", "aes256"])]
@@ -37,9 +35,15 @@ pub struct Cli {
     pub max_size: Option<f64>,
     #[arg(long, default_value = "info", value_parser = ["info", "warn", "error"])]
     pub log_level: String,
+    #[arg(long, default_value_t = true)]
+    pub use_default_config: bool,
+    #[arg(long, default_value_t = false)]
+    pub show_config: bool,
 }
 
 #[derive(Clone, ValueEnum)]
+#[derive(PartialEq)]
+#[derive(Debug)]
 pub enum Mode {
     Individual,
     Compressed,
@@ -51,18 +55,6 @@ pub enum PasswordMode {
     Manual,
     Timestamp,
     None,
-}
-
-pub fn validate_cli_args(cli: &Cli) -> io::Result<()> {
-    validate_input_path(&cli.input)?;
-    validate_file_patterns(&cli.include, &cli.exclude)?;
-    if matches!(cli.mode, Mode::Compressed) && cli.layer == "none" {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "壓縮模式下不支援 'none' 層數，請選擇 'single' 或 'double'"
-        ));
-    }
-    Ok(())
 }
 
 pub fn validate_input_path(input: &str) -> io::Result<&Path> {
