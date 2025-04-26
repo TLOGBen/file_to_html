@@ -4,9 +4,14 @@ use std::path::Path;
 
 use crate::config::config::{PasswordMode};
 use crate::utils::utils::setup_logging;
-use crate::config::ports::{AppConfig, ConfigPort, ConversionPort};
-use crate::service::config_service::{ConfigService, DefaultConfigAdapter};
-use crate::utils::convert::ConversionAdapter;
+use crate::config::ports::{AppConfig, ConfigPort};
+use crate::facade::conversion_facade::ConversionFacade;
+use crate::facade::traits::i_conversion::ConversionFacadeTrait;
+use crate::models::conversion::ConversionInput;
+use crate::service::config_service::{DefaultConfigAdapter};
+use crate::service::file::FileService;
+use crate::service::html::HtmlService;
+use crate::service::zip::ZipService;
 
 pub fn process_interactive_mode() -> io::Result<String> {
     println!("=== 歡迎使用互動模式 ===");
@@ -18,18 +23,34 @@ pub fn process_interactive_mode() -> io::Result<String> {
         println!("使用預設配置：壓縮模式，單層壓縮，隨機密碼，AES256 加密");
         Box::new(DefaultConfigAdapter::new(input.clone(), output.clone()))
     } else {
-        Box::new(InteractiveConfigAdapter::new(input, output))
+        Box::new(InteractiveConfigAdapter::new(input.clone(), output.clone()))
     };
 
-    let config_service = ConfigService::new(config_port);
-    let config = config_service.get_config()?;
+    let facade: Box<dyn ConversionFacadeTrait> = Box::new(ConversionFacade::new(
+        config_port,
+        Box::new(FileService::new()),
+        Box::new(ZipService::new()),
+        Box::new(HtmlService::new()),
+    ));
 
-    // 顯示配置（模擬 --show-config）
-    println!("實際使用的配置：{:#?}", config);
+    let conversion_input = ConversionInput {
+        input_path: Path::new(&input).to_path_buf(),
+        output_dir: output.clone(),
+        is_compressed: true,
+        compress: true,
+        include: vec!["*".to_string()],
+        exclude: None,
+        password_mode: crate::config::config::PasswordMode::Random,
+        display_password: true,
+        layer: "single".to_string(),
+        encryption_method: "aes256".to_string(),
+        no_progress: false,
+        max_size: None,
+    };
 
-    let conversion_port: Box<dyn ConversionPort> = Box::new(ConversionAdapter);
-    let output = conversion_port.execute(config)?; // 傳遞借用
-    Ok(output)
+    let output = facade.execute_conversion(conversion_input)?;
+    println!("實際使用的配置：{:#?}", output);
+    Ok(output.output_path)
 }
 
 pub fn get_default_config_option() -> io::Result<bool> {

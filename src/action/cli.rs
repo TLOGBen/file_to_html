@@ -1,15 +1,19 @@
 use std::io;
 use clap::Parser;
 use crate::config::config::{Cli, Mode, PasswordMode, validate_input_path, validate_file_patterns};
-use crate::action::interactive::process_interactive_mode;
 use crate::utils::utils::setup_logging;
-use crate::config::ports::{AppConfig, ConfigPort, ConversionPort};
-use crate::service::config_service::{ConfigService, DefaultConfigAdapter};
-use crate::utils::convert::ConversionAdapter;
+use crate::config::ports::{AppConfig, ConfigPort};
+use crate::facade::conversion_facade::ConversionFacade;
+use crate::facade::traits::i_conversion::ConversionFacadeTrait;
+use crate::models::conversion::ConversionInput;
+use crate::service::config_service::{DefaultConfigAdapter};
+use crate::service::file::FileService;
+use crate::service::html::HtmlService;
+use crate::service::zip::ZipService;
 
 pub fn process_args(args: Vec<String>) -> io::Result<String> {
     if args.len() == 1 {
-        process_interactive_mode()
+        crate::action::interactive::process_interactive_mode()
     } else {
         process_cli_mode()
     }
@@ -19,7 +23,6 @@ pub fn process_cli_mode() -> io::Result<String> {
     let cli = Cli::parse();
     setup_logging(&cli.log_level.clone().unwrap_or("info".to_string()))?;
 
-    // 檢查是否僅提供 input 和 output（預設配置）
     let is_default_config = cli.mode.is_none()
         && cli.include.is_none()
         && cli.exclude.is_none()
@@ -32,7 +35,6 @@ pub fn process_cli_mode() -> io::Result<String> {
         && cli.max_size.is_none()
         && cli.log_level.is_none();
 
-    // 選擇配置適配器
     let config_port: Box<dyn ConfigPort> = if is_default_config {
         log::info!("未提供選項參數，使用預設配置：壓縮模式，單層壓縮，隨機密碼");
         Box::new(DefaultConfigAdapter::new(cli.input.clone(), cli.output.clone()))
@@ -40,18 +42,40 @@ pub fn process_cli_mode() -> io::Result<String> {
         Box::new(CliConfigAdapter::new(cli.clone()))
     };
 
-    let config_service = ConfigService::new(config_port);
-    let config = config_service.get_config()?;
+    let facade: Box<dyn ConversionFacadeTrait> = Box::new(ConversionFacade::new(
+        config_port,
+        Box::new(FileService::new()),
+        Box::new(ZipService::new()),
+        Box::new(HtmlService::new()),
+    ));
 
-    let conversion_port: Box<dyn ConversionPort> = Box::new(ConversionAdapter);
-    let output = conversion_port.execute(config.clone())?;
+    let conversion_input = ConversionInput {
+        input_path: std::path::Path::new(&cli.input).to_path_buf(),
+        output_dir: cli.output.clone(),
+        is_compressed: cli.mode == Some(crate::config::config::Mode::Compressed),
+        compress: cli.compress.unwrap_or(true),
+        include: cli.include.clone().unwrap_or(vec!["*".to_string()]),
+        exclude: cli.exclude.clone(),
+        password_mode: match cli.password_mode.as_deref() {
+            Some("random") => crate::config::config::PasswordMode::Random,
+            Some("manual") => crate::config::config::PasswordMode::Manual,
+            Some("timestamp") => crate::config::config::PasswordMode::Timestamp,
+            Some("none") => crate::config::config::PasswordMode::None,
+            _ => crate::config::config::PasswordMode::Random,
+        },
+        display_password: cli.display_password.unwrap_or(cli.password_mode.as_deref() == Some("random")),
+        layer: cli.layer.clone().unwrap_or("double".to_string()),
+        encryption_method: cli.encryption_method.clone().unwrap_or("aes256".to_string()),
+        no_progress: cli.no_progress.unwrap_or(false),
+        max_size: cli.max_size,
+    };
 
-    // 若啟用 --show-config，在轉換後顯示配置
+    let output = facade.execute_conversion(conversion_input)?;
     if cli.show_config {
-        println!("實際使用的配置：{:#?}", config);
+        println!("實際使用的配置：{:#?}", output);
     }
 
-    Ok(output)
+    Ok(output.output_path)
 }
 
 // CLI 配置適配器

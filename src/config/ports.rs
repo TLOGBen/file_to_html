@@ -19,7 +19,7 @@ pub struct AppConfig {
 }
 
 // 配置來源的 Port
-pub trait ConfigPort {
+pub trait ConfigPort: Send + Sync {
     fn get_config(&self) -> io::Result<AppConfig>;
 }
 

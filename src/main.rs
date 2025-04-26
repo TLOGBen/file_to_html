@@ -1,5 +1,11 @@
 mod service {
+    pub(crate) mod file;
+    pub(crate) mod html;
+    pub(crate) mod zip;
     pub(crate) mod config_service;
+    pub(crate) mod traits {
+        pub(crate) mod i_service;
+    }
 }
 
 mod config {
@@ -13,11 +19,24 @@ mod action {
 }
 
 mod utils {
-    pub(crate) mod convert;
-    pub(crate) mod file;
-    pub(crate) mod html;
     pub(crate) mod utils;
+}
+
+mod facade {
+    pub(crate) mod conversion_facade;
+    pub(crate) mod ports {
+        pub(crate) mod facade_ports;
+    }
+    pub(crate) mod traits {
+        pub(crate) mod i_conversion;
+    }
+}
+
+mod models {
+    pub(crate) mod conversion;
+    pub(crate) mod file;
     pub(crate) mod zip;
+    pub(crate) mod html;
 }
 
 use std::io;
