@@ -38,12 +38,6 @@
    Copy-Item .\target\release\file_to_html.exe -Destination "$env:USERPROFILE\.cargo\bin"
    ```
 
-### 方法二：使用 Cargo 安裝
-
-```bash
-cargo install file_to_html
-```
-
 ## 使用指南
 
 ### 快速開始
